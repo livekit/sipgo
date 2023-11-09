@@ -28,6 +28,7 @@ var (
 	// Stream parse errors
 	ErrParseSipPartial         = errors.New("SIP partial data")
 	ErrParseReadBodyIncomplete = errors.New("reading body incomplete")
+	ErrParseMoreMessages       = errors.New("Stream has more message")
 )
 
 var bufReader = sync.Pool{
@@ -154,8 +155,8 @@ func (p *Parser) ParseSIP(data []byte) (msg sip.Message, err error) {
 	return msg, nil
 }
 
-// NewSIPStream implements SIP parsing contructor for stream
-// should be called per single stream
+// NewSIPStream implements SIP parsing contructor for IO that stream SIP message
+// It should be created per each stream
 func (p *Parser) NewSIPStream() *ParserStream {
 	return &ParserStream{
 		headersParsers: p.headersParsers, // safe as it read only
@@ -196,36 +197,34 @@ func ParseLine(startLine string) (msg sip.Message, err error) {
 // terminated by a carriage-return line-feed sequence (CRLF).  Note that
 // the empty line MUST be present even if the message-body is not.
 func nextLine(reader *bytes.Buffer) (line string, err error) {
-	// Scan full line without buffer
-	// If we need to continue then try to grow
-	line, err = reader.ReadString('\n')
-	if err != nil {
-		// if err == io.EOF {
-		// 	if len(line) > 0 {
-		// 		return line, ErrParseLineNoCRLF
-		// 	}
-
-		// 	return line, nil
-		// }
-
-		// We may get io.EOF and line till it was read
-		return line, err
-	}
-
 	// https://www.rfc-editor.org/rfc/rfc3261.html#section-7
 	// The start-line, each message-header line, and the empty line MUST be
 	// terminated by a carriage-return line-feed sequence (CRLF).  Note that
 	// the empty line MUST be present even if the message-body is not.
+
+	// Lines could be multiline as well so this is also acceptable
+	// TO :
+	// sip:vivekg@chair-dnrc.example.com ;   tag    = 1918181833n
+
+	line, err = reader.ReadString('\r')
+	if err != nil {
+		// We may get io.EOF and line till it was read
+		return line, err
+	}
+	br, err := reader.ReadByte()
+	if err != nil {
+		return line, err
+	}
+
+	if br != '\n' {
+		return line, ErrParseLineNoCRLF
+	}
 	lenline := len(line)
-	if lenline < 2 {
+	if lenline < 1 {
 		return line, ErrParseLineNoCRLF
 	}
 
-	if line[lenline-2] != '\r' {
-		return line, ErrParseLineNoCRLF
-	}
-
-	line = line[:lenline-2]
+	line = line[:lenline-1]
 	return line, nil
 }
 
