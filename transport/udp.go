@@ -122,14 +122,15 @@ func (t *UDPTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 		Port: raddr.Port,
 	}
 
-	udpconn, err := net.DialUDP("udp", uladdr, uraddr)
+	udpconn, err := net.ListenUDP("udp", uladdr)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &UDPConnection{
-		Conn:     udpconn,
-		refcount: 1 + IdleConnection,
+		PacketConn: udpconn,
+		raddr:      uraddr,
+		refcount:   1 + IdleConnection,
 	}
 
 	addr := uraddr.String()
@@ -166,7 +167,7 @@ func (t *UDPTransport) readConnection(conn *UDPConnection, handler sip.MessageHa
 
 func (t *UDPTransport) readConnectedConnection(conn *UDPConnection, handler sip.MessageHandler) {
 	buf := make([]byte, transportBufferSize)
-	raddr := conn.Conn.RemoteAddr().String()
+	raddr := conn.raddr.String()
 	defer t.pool.CloseAndDelete(conn, raddr)
 
 	for {
@@ -243,22 +244,19 @@ type UDPConnection struct {
 	// mutual exclusive for now
 	// TODO Refactor
 	PacketConn net.PacketConn
-	Conn       net.Conn
+	raddr      *net.UDPAddr
 
 	mu       sync.RWMutex
 	refcount int
 }
 
 func (c *UDPConnection) LocalAddr() net.Addr {
-	if c.Conn != nil {
-		return c.Conn.LocalAddr()
-	}
 	return c.PacketConn.LocalAddr()
 }
 
 func (c *UDPConnection) Ref(i int) int {
 	// For now all udp connections must be reused
-	if c.Conn == nil {
+	if c.raddr == nil {
 		return 0
 	}
 
@@ -272,18 +270,18 @@ func (c *UDPConnection) Ref(i int) int {
 func (c *UDPConnection) Close() error {
 	// TODO closing packet connection is problem
 	// but maybe referece could help?
-	if c.Conn == nil {
+	if c.raddr == nil {
 		return nil
 	}
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.Conn.RemoteAddr().String()).Int("ref", 0).Msg("UDP doing hard close")
-	return c.Conn.Close()
+	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.raddr.String()).Int("ref", 0).Msg("UDP doing hard close")
+	return c.PacketConn.Close()
 }
 
 func (c *UDPConnection) TryClose() (int, error) {
-	if c.Conn == nil {
+	if c.raddr == nil {
 		return 0, nil
 	}
 
@@ -291,32 +289,33 @@ func (c *UDPConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	log.Debug().Str("src", c.Conn.LocalAddr().String()).Str("dst", c.Conn.RemoteAddr().String()).Int("ref", ref).Msg("UDP reference decrement")
+	log.Debug().Str("src", c.PacketConn.LocalAddr().String()).Str("dst", c.raddr.String()).Int("ref", ref).Msg("UDP reference decrement")
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		log.Warn().Str("src", c.Conn.LocalAddr().String()).Str("dst", c.Conn.RemoteAddr().String()).Int("ref", ref).Msg("UDP ref went negative")
+		log.Warn().Str("src", c.PacketConn.LocalAddr().String()).Str("dst", c.raddr.String()).Int("ref", ref).Msg("UDP ref went negative")
 		return 0, nil
 	}
 
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.Conn.RemoteAddr().String()).Int("ref", ref).Msg("UDP closing")
-	return 0, c.Conn.Close()
+	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.raddr.String()).Int("ref", ref).Msg("UDP closing")
+	return 0, c.PacketConn.Close()
 }
 
 func (c *UDPConnection) Read(b []byte) (n int, err error) {
 	if SIPDebug {
-		log.Debug().Msgf("UDP read %s <- %s:\n%s", c.Conn.LocalAddr().String(), c.Conn.RemoteAddr().String(), string(b))
+		log.Debug().Msgf("UDP read %s <- %s:\n%s", c.PacketConn.LocalAddr().String(), c.raddr.String(), string(b))
 	}
-	return c.Conn.Read(b)
+	n, _, err = c.PacketConn.ReadFrom(b)
+	return n, err
 }
 
 func (c *UDPConnection) Write(b []byte) (n int, err error) {
 	if SIPDebug {
-		log.Debug().Msgf("UDP write %s -> %s:\n%s", c.Conn.LocalAddr().String(), c.Conn.RemoteAddr().String(), string(b))
+		log.Debug().Msgf("UDP write %s -> %s:\n%s", c.PacketConn.LocalAddr().String(), c.raddr.String(), string(b))
 	}
-	return c.Conn.Write(b)
+	return c.PacketConn.WriteTo(b, c.raddr)
 }
 
 func (c *UDPConnection) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
@@ -350,11 +349,11 @@ func (c *UDPConnection) WriteMsg(msg sip.Message) error {
 
 	var n int
 	// TODO doing without if
-	if c.Conn != nil {
+	if c.raddr != nil {
 		var err error
 		n, err = c.Write(data)
 		if err != nil {
-			return fmt.Errorf("conn %s write err=%w", c.Conn.LocalAddr().String(), err)
+			return fmt.Errorf("conn %s write err=%w", c.PacketConn.LocalAddr().String(), err)
 		}
 	} else {
 		var err error
