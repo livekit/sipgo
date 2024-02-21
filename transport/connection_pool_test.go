@@ -1,12 +1,12 @@
 package transport
 
 import (
+	"log/slog"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/emiago/sipgo/fakes"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func TestConnectionPool(t *testing.T) {
@@ -29,7 +29,9 @@ func TestConnectionPool(t *testing.T) {
 }
 
 func BenchmarkConnectionPool(b *testing.B) {
-	log.Logger = log.Logger.Level(zerolog.WarnLevel)
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}),
+	))
 	pool := NewConnectionPool()
 
 	for i := 0; i < b.N; i++ {

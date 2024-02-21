@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -12,8 +13,6 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 
 	"github.com/icholy/digest"
 )
@@ -29,15 +28,13 @@ func main() {
 	// Make SIP Debugging available
 	transport.SIPDebug = os.Getenv("SIP_DEBUG") != ""
 
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: time.StampMicro,
-	}).With().Timestamp().Logger().Level(zerolog.InfoLevel)
-
-	if lvl, err := zerolog.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil && lvl != zerolog.NoLevel {
-		log.Logger = log.Logger.Level(lvl)
+	lvl := slog.LevelInfo
+	if s := os.Getenv("LOG_LEVEL"); s != "" {
+		lvl.UnmarshalText([]byte(s))
 	}
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 
 	registry := make(map[string]string)
 	for _, c := range strings.Split(*creds, ",") {
@@ -47,15 +44,15 @@ func main() {
 
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent("SIPGO"),
-	// sipgo.WithUserAgentIP(*extIP),
+		// sipgo.WithUserAgentIP(*extIP),
 	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup user agent")
+		panic(fmt.Errorf("Fail to setup user agent: %w", err))
 	}
 
 	srv, err := sipgo.NewServer(ua)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup server handle")
+		panic(fmt.Errorf("Fail to setup server handle: %w", err))
 	}
 
 	ctx := context.TODO()
@@ -83,7 +80,7 @@ func main() {
 
 		cred, err := digest.ParseCredentials(h.Value())
 		if err != nil {
-			log.Error().Err(err).Msg("parsing creds failed")
+			slog.Error("parsing creds failed", "err", err)
 			tx.Respond(sip.NewResponseFromRequest(req, 401, "Bad credentials", nil))
 			return
 		}
@@ -104,7 +101,7 @@ func main() {
 		})
 
 		if err != nil {
-			log.Error().Err(err).Msg("Calc digest failed")
+			slog.Error("Calc digest failed", "err", err)
 			tx.Respond(sip.NewResponseFromRequest(req, 401, "Bad credentials", nil))
 			return
 		}
@@ -113,21 +110,21 @@ func main() {
 			tx.Respond(sip.NewResponseFromRequest(req, 401, "Unathorized", nil))
 			return
 		}
-		log.Info().Str("username", cred.Username).Str("source", req.Source()).Msg("New client registered")
+		slog.Info("New client registered", "username", cred.Username, "source", req.Source())
 		tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
 	})
 
-	log.Info().Str("addr", *extIP).Msg("Listening on")
+	slog.Info("Listening on", "addr", *extIP)
 
 	switch *tran {
 	case "tls", "wss":
 		cert, err := tls.LoadX509KeyPair(*tlscrt, *tlskey)
 		if err != nil {
 
-			log.Fatal().Err(err).Msg("Fail to load  x509 key and crt")
+			panic(fmt.Errorf("Fail to load  x509 key and crt: %w", err))
 		}
 		if err := srv.ListenAndServeTLS(ctx, *tran, *extIP, &tls.Config{Certificates: []tls.Certificate{cert}}); err != nil {
-			log.Info().Err(err).Msg("Listening stop")
+			slog.Info("Listening stop", "err", err)
 		}
 		return
 	}

@@ -1,9 +1,8 @@
 package transport
 
 import (
+	"log/slog"
 	"sync"
-
-	"github.com/rs/zerolog/log"
 )
 
 // TODO Connection pool with keeping active connections longer
@@ -57,7 +56,7 @@ func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 	ref, _ := c.TryClose() // Be nice. Saves from double closing
 	if ref > 0 {
 		if err := c.Close(); err != nil {
-			log.Warn().Err(err).Msg("Closing conection return error")
+			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
 	delete(p.m, addr)
@@ -72,7 +71,7 @@ func (p *ConnectionPool) Clear() {
 			continue
 		}
 		if err := c.Close(); err != nil {
-			log.Warn().Err(err).Msg("Closing conection return error")
+			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
 	// Remove all

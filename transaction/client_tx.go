@@ -2,13 +2,12 @@ package transaction
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-
-	"github.com/rs/zerolog"
 )
 
 type ClientTx struct {
@@ -25,7 +24,7 @@ type ClientTx struct {
 	closeOnce sync.Once
 }
 
-func NewClientTx(key string, origin *sip.Request, conn transport.Connection, logger zerolog.Logger) *ClientTx {
+func NewClientTx(key string, origin *sip.Request, conn transport.Connection, logger *slog.Logger) *ClientTx {
 	tx := &ClientTx{}
 	tx.key = key
 	// tx.conn = tpl
@@ -43,7 +42,7 @@ func (tx *ClientTx) Init() error {
 	tx.initFSM()
 
 	if err := tx.conn.WriteMsg(tx.origin); err != nil {
-		tx.log.Debug().Err(err).Str("req", tx.origin.StartLine()).Msg("Fail to write request on init")
+		tx.log.Debug("Fail to write request on init", "err", err, "req", tx.origin.StartLine())
 		return wrapTransportError(err)
 	}
 
@@ -148,11 +147,11 @@ func (tx *ClientTx) cancel() {
 		if lastResp != nil {
 			lastRespStr = lastResp.Short()
 		}
-		tx.log.Error().
-			Str("invite_request", tx.origin.Short()).
-			Str("invite_response", lastRespStr).
-			Str("cancel_request", cancelRequest.Short()).
-			Msgf("send CANCEL request failed: %s", err)
+		tx.log.Error("send CANCEL request failed", "err", err,
+			"invite_request", tx.origin.Short(),
+			"invite_response", lastRespStr,
+			"cancel_request", cancelRequest.Short(),
+		)
 
 		tx.mu.Lock()
 		tx.lastErr = wrapTransportError(err)
@@ -170,11 +169,11 @@ func (tx *ClientTx) ack() {
 	ack := sip.NewAckRequest(tx.origin, lastResp, nil)
 	err := tx.conn.WriteMsg(ack)
 	if err != nil {
-		tx.log.Error().
-			Str("invite_request", tx.origin.Short()).
-			Str("invite_response", lastResp.Short()).
-			Str("cancel_request", ack.Short()).
-			Msgf("send ACK request failed: %s", err)
+		tx.log.Error("send ACK request failed", "err", err,
+			"invite_request", tx.origin.Short(),
+			"invite_response", lastResp.Short(),
+			"cancel_request", ack.Short(),
+		)
 
 		tx.mu.Lock()
 		tx.lastErr = wrapTransportError(err)
@@ -210,7 +209,7 @@ func (tx *ClientTx) resend() {
 		tx.lastErr = wrapTransportError(err)
 		tx.mu.Unlock()
 
-		tx.log.Debug().Err(err).Str("req", tx.origin.StartLine()).Msg("Fail to resend request")
+		tx.log.Debug("Fail to resend request", "err", err, "req", tx.origin.StartLine())
 		go tx.spinFsm(client_input_transport_err)
 	}
 }
@@ -240,7 +239,7 @@ func (tx *ClientTx) delete() {
 		tx.onTerminate(tx.key)
 
 		if _, err := tx.conn.TryClose(); err != nil {
-			tx.log.Info().Err(err).Msg("Closing connection returned error")
+			tx.log.Info("Closing connection returned error", "err", err)
 		}
 	})
 
@@ -260,5 +259,5 @@ func (tx *ClientTx) delete() {
 		tx.timer_d = nil
 	}
 	tx.mu.Unlock()
-	tx.log.Debug().Str("tx", tx.Key()).Msg("Client transaction destroyed")
+	tx.log.Debug("Client transaction destroyed", "tx", tx.Key())
 }

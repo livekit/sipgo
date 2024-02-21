@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/emiago/sipgo/sip"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 // The whitespace characters recognised by the Augmented Backus-Naur Form syntax
@@ -49,7 +47,7 @@ func ParseMessage(msgData []byte) (sip.Message, error) {
 // Parser is implementation of sip.SIPParser
 // It is optimized with faster header parsing
 type Parser struct {
-	log zerolog.Logger
+	log *slog.Logger
 	// HeadersParsers uses default list of headers to be parsed. Smaller list parser will be faster
 	headersParsers mapHeadersParser
 }
@@ -60,7 +58,7 @@ type ParserOption func(p *Parser)
 // Create a new Parser.
 func NewParser(options ...ParserOption) *Parser {
 	p := &Parser{
-		log:            log.Logger,
+		log:            slog.Default(),
 		headersParsers: headersParsers,
 	}
 
@@ -72,7 +70,7 @@ func NewParser(options ...ParserOption) *Parser {
 }
 
 // WithServerLogger allows customizing parser logger
-func WithParserLogger(logger zerolog.Logger) ParserOption {
+func WithParserLogger(logger *slog.Logger) ParserOption {
 	return func(p *Parser) {
 		p.log = logger
 	}
@@ -123,7 +121,7 @@ func (p *Parser) ParseSIP(data []byte) (msg sip.Message, err error) {
 
 		err = p.headersParsers.parseMsgHeader(msg, line)
 		if err != nil {
-			p.log.Info().Err(err).Str("line", line).Msg("skip header due to error")
+			p.log.Info("skip header due to error", "line", line, "err", err)
 		}
 	}
 

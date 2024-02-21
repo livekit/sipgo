@@ -246,13 +246,13 @@ func (tx *ServerTx) actFinal() FsmInput {
 
 // Inform user of transport error
 func (tx *ServerTx) actTransErr() FsmInput {
-	tx.log.Debug().Err(tx.Err()).Msg("Transport error. Transaction will terminate")
+	tx.log.Debug("Transport error. Transaction will terminate", "err", tx.Err())
 	return server_input_delete
 }
 
 // Inform user of timeout error
 func (tx *ServerTx) actTimeout() FsmInput {
-	tx.log.Debug().Err(tx.Err()).Msg("Timed out. Transaction will terminate")
+	tx.log.Debug("Timed out. Transaction will terminate", "err", tx.Err())
 	return server_input_delete
 }
 
@@ -275,7 +275,7 @@ func (tx *ServerTx) actRespondDelete() FsmInput {
 		tx.mu.Lock()
 		tx.lastErr = wrapTransportError(err)
 		tx.mu.Unlock()
-		tx.log.Debug().Err(err).Msg("fail to actRespondDelete")
+		tx.log.Debug("fail to actRespondDelete", "err", err)
 		return server_input_transport_err
 	}
 

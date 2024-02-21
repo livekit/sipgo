@@ -3,21 +3,21 @@ package sipgo
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/emiago/sipgo/fakes"
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transaction"
 	"github.com/emiago/sipgo/transport"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func testCreateMessage(t testing.TB, rawMsg []string) sip.Message {
@@ -100,14 +100,13 @@ func createTestBye(t *testing.T, targetSipUri string, transport, addr string, ca
 }
 
 func TestMain(m *testing.M) {
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: "2006-01-02 15:04:05.000",
-	}).With().Timestamp().Logger().Level(zerolog.WarnLevel)
-
-	if lvl, err := zerolog.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
-		log.Logger = log.Level(lvl)
+	lvl := slog.LevelWarn
+	if s := os.Getenv("LOG_LEVEL"); s != "" {
+		lvl.UnmarshalText([]byte(s))
 	}
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 	transport.SIPDebug = os.Getenv("SIP_DEBUG") == "true"
 
 	m.Run()
@@ -400,7 +399,7 @@ func ExampleServer_OnNoRoute() {
 		res := sip.NewResponseFromRequest(req, 405, "Method Not Allowed", nil)
 		// Send response directly and let transaction terminate
 		if err := srv.WriteResponse(res); err != nil {
-			srv.log.Error().Err(err).Msg("respond '405 Method Not Allowed' failed")
+			srv.log.Error("respond '405 Method Not Allowed' failed", "err", err)
 		}
 	})
 }

@@ -3,16 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 
 	"github.com/icholy/digest"
 )
@@ -28,27 +26,25 @@ func main() {
 	// Make SIP Debugging available
 	transport.SIPDebug = os.Getenv("SIP_DEBUG") != ""
 
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: time.StampMicro,
-	}).With().Timestamp().Logger().Level(zerolog.InfoLevel)
-
-	if lvl, err := zerolog.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil && lvl != zerolog.NoLevel {
-		log.Logger = log.Logger.Level(lvl)
+	lvl := slog.LevelInfo
+	if s := os.Getenv("LOG_LEVEL"); s != "" {
+		lvl.UnmarshalText([]byte(s))
 	}
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 
 	// Setup UAC
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent(*username),
 	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup user agent")
+		panic(fmt.Errorf("Fail to setup user agent: %w", err))
 	}
 
 	client, err := sipgo.NewClient(ua, sipgo.WithClientHostname(*inter))
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup client handle")
+		panic(fmt.Errorf("Fail to setup client handle: %w", err))
 	}
 	defer client.Close()
 
@@ -63,25 +59,25 @@ func main() {
 
 	// Send request and parse response
 	// req.SetDestination(*dst)
-	log.Info().Msg(req.StartLine())
+	slog.Info(req.StartLine())
 	tx, err := client.TransactionRequest(req)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to create transaction")
+		panic(fmt.Errorf("Fail to create transaction: %w", err))
 	}
 	defer tx.Terminate()
 
 	res, err := getResponse(tx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to get response")
+		panic(fmt.Errorf("Fail to get response: %w", err))
 	}
 
-	log.Info().Int("status", int(res.StatusCode)).Msg("Received status")
+	slog.Info("Received status", "status", int(res.StatusCode))
 	if res.StatusCode == 401 {
 		// Get WwW-Authenticate
 		wwwAuth := res.GetHeader("WWW-Authenticate")
 		chal, err := digest.ParseChallenge(wwwAuth.Value())
 		if err != nil {
-			log.Fatal().Str("wwwauth", wwwAuth.Value()).Err(err).Msg("Fail to parse challenge")
+			panic(fmt.Errorf("Fail to parse challenge %s=%s: %w", "wwwauth", wwwAuth.Value(), err))
 		}
 
 		// Reply with digest
@@ -97,21 +93,21 @@ func main() {
 
 		tx, err := client.TransactionRequest(newReq)
 		if err != nil {
-			log.Fatal().Err(err).Msg("Fail to create transaction")
+			panic(fmt.Errorf("Fail to create transaction: %w", err))
 		}
 		defer tx.Terminate()
 
 		res, err = getResponse(tx)
 		if err != nil {
-			log.Fatal().Err(err).Msg("Fail to get response")
+			panic(fmt.Errorf("Fail to get response: %w", err))
 		}
 	}
 
 	if res.StatusCode != 200 {
-		log.Fatal().Msg("Fail to register")
+		panic("Fail to register")
 	}
 
-	log.Info().Msg("Client registered")
+	slog.Info("Client registered")
 }
 
 func getResponse(tx sip.ClientTransaction) (*sip.Response, error) {

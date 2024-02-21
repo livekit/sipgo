@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -14,9 +15,6 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,29 +174,14 @@ func TestMain(m *testing.M) {
 	debug := flag.Bool("debug", false, "")
 	flag.Parse()
 
-	logruser := logrus.New()
-	formater := &logrus.TextFormatter{
-		ForceColors:     true,
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05.000",
-	}
-
-	formater.DisableColors = false
-	logruser.Formatter = formater
-
-	logruser.SetOutput(os.Stderr)
-	// logruser.SetLevel(logrus.DebugLevel)
-
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: "2006-01-02 15:04:05.000",
-	}).With().Timestamp().Logger().Level(zerolog.WarnLevel)
-
+	lvl := slog.LevelWarn
 	if *debug {
-		logruser.SetLevel(logrus.TraceLevel)
-		log.Logger = log.Logger.With().Logger().Level(zerolog.DebugLevel)
+		lvl = slog.LevelDebug
 		transport.SIPDebug = true
 	}
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 
 	m.Run()
 }

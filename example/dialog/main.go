@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -16,20 +16,20 @@ func main() {
 	dst := flag.String("dst", "127.0.0.2:5060", "Destination pbx, sip server")
 	flag.Parse()
 
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: "2006-01-02 15:04:05.000",
-	}).With().Timestamp().Logger().Level(zerolog.InfoLevel)
+	lvl := slog.LevelInfo
+	slog.SetDefault(slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}),
+	))
 
 	ua, _ := sipgo.NewUA()
 
 	srv, err := sipgo.NewServerDialog(ua)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup dialog server")
+		panic(fmt.Errorf("Fail to setup dialog server: %w", err))
 	}
 	client, err := sipgo.NewClient(ua)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup dialog server")
+		panic(fmt.Errorf("Fail to setup dialog server: %w", err))
 	}
 
 	h := &Handler{
@@ -40,9 +40,9 @@ func main() {
 
 	setupRoutes(srv, h)
 
-	log.Info().Str("ip", *extIP).Str("dst", *dst).Msg("Starting server")
+	slog.Info("Starting server", "ip", *extIP, "dst", *dst)
 	if err := srv.ListenAndServe(context.TODO(), "udp", *extIP); err != nil {
-		log.Error().Err(err).Msg("Fail to serve")
+		slog.Error("Fail to serve", "err", err)
 	}
 }
 
@@ -67,7 +67,7 @@ func (s *Handler) proxyDestination() string {
 
 // onDialog is our main function for handling dialogs
 func (h *Handler) onDialog(d sip.Dialog) {
-	log.Info().Str("state", d.StateString()).Str("ID", d.ID).Msg("New dialog <--")
+	slog.Info("New dialog <--", "state", d.StateString(), "ID", d.ID)
 	switch d.State {
 	case sip.DialogStateEstablished:
 		// 200 response
@@ -85,7 +85,7 @@ func (h *Handler) route(req *sip.Request, tx sip.ServerTransaction) {
 	// Handle 200 Ack
 	if req.IsAck() {
 		if err := h.c.WriteRequest(req); err != nil {
-			log.Error().Err(err).Msg("Send failed")
+			slog.Error("Send failed", "err", err)
 			reply(tx, req, 500, "")
 			return
 		}
@@ -95,7 +95,7 @@ func (h *Handler) route(req *sip.Request, tx sip.ServerTransaction) {
 	// Start client transaction and relay our request
 	clTx, err := h.c.TransactionRequest(req, sipgo.ClientRequestAddVia, sipgo.ClientRequestAddRecordRoute)
 	if err != nil {
-		log.Error().Err(err).Msg("RequestWithContext  failed")
+		slog.Error("RequestWithContext  failed", "err", err)
 		reply(tx, req, 500, "")
 		return
 	}
@@ -110,7 +110,7 @@ func (h *Handler) route(req *sip.Request, tx sip.ServerTransaction) {
 			res.SetDestination(req.Source())
 			res.RemoveHeader("Via")
 			if err := tx.Respond(res); err != nil {
-				log.Error().Err(err).Msg("ResponseHandler transaction respond failed")
+				slog.Error("ResponseHandler transaction respond failed", "err", err)
 			}
 
 		case m := <-tx.Cancels():
@@ -121,17 +121,17 @@ func (h *Handler) route(req *sip.Request, tx sip.ServerTransaction) {
 
 		case <-tx.Done():
 			if err := tx.Err(); err != nil {
-				log.Error().Err(err).Str("req", req.Method.String()).Msg("Transaction done with error")
+				slog.Error("Transaction done with error", "err", err, "req", req.Method.String())
 				return
 			}
-			log.Debug().Str("req", req.Method.String()).Msg("Transaction done")
+			slog.Debug("Transaction done", "req", req.Method.String())
 			return
 		case <-clTx.Done():
 			if err := clTx.Err(); err != nil {
-				log.Error().Err(err).Str("req", req.Method.String()).Msg("Transaction done with error")
+				slog.Error("Transaction done with error", "err", err, "req", req.Method.String())
 				return
 			}
-			log.Debug().Str("req", req.Method.String()).Msg("Client Transaction done")
+			slog.Debug("Client Transaction done", "err", err, "req", req.Method.String())
 			return
 		}
 	}
@@ -141,6 +141,6 @@ func reply(tx sip.ServerTransaction, req *sip.Request, code sip.StatusCode, reas
 	resp := sip.NewResponseFromRequest(req, code, reason, nil)
 	resp.SetDestination(req.Source()) //This is optional, but can make sure not wrong via is read
 	if err := tx.Respond(resp); err != nil {
-		log.Error().Err(err).Msg("Fail to respond on transaction")
+		slog.Error("Fail to respond on transaction", "err", err)
 	}
 }

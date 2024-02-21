@@ -2,13 +2,12 @@ package transaction
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-
-	"github.com/rs/zerolog"
 )
 
 type FSMfunc func() FSMfunc
@@ -34,7 +33,7 @@ type ServerTx struct {
 	closeOnce sync.Once
 }
 
-func NewServerTx(key string, origin *sip.Request, conn transport.Connection, logger zerolog.Logger) *ServerTx {
+func NewServerTx(key string, origin *sip.Request, conn transport.Connection, logger *slog.Logger) *ServerTx {
 	tx := new(ServerTx)
 	tx.key = key
 	tx.conn = conn
@@ -76,7 +75,7 @@ func (tx *ServerTx) Init() error {
 			)
 			// tx.Log().Trace("timer_1xx fired")
 			if err := tx.Respond(trying); err != nil {
-				tx.log.Error().Err(err).Msg("send '100 Trying' response failed")
+				tx.log.Error("send '100 Trying' response failed", "err", err)
 			}
 		})
 		tx.mu.Unlock()
@@ -212,7 +211,7 @@ func (tx *ServerTx) passResp() error {
 	// tx.Log().Debug("actFinal")
 	err := tx.conn.WriteMsg(lastResp)
 	if err != nil {
-		tx.log.Debug().Err(err).Str("res", lastResp.StartLine()).Msg("fail to pass response")
+		tx.log.Debug("fail to pass response", "err", err, "res", lastResp.StartLine())
 		tx.mu.Lock()
 		tx.lastErr = wrapTransportError(err)
 		tx.mu.Unlock()
@@ -222,7 +221,7 @@ func (tx *ServerTx) passResp() error {
 }
 
 func (tx *ServerTx) Terminate() {
-	tx.log.Debug().Msg("Server transaction terminating")
+	tx.log.Debug("Server transaction terminating")
 	tx.delete()
 }
 
@@ -286,5 +285,5 @@ func (tx *ServerTx) delete() {
 		tx.timer_1xx = nil
 	}
 	tx.mu.Unlock()
-	tx.log.Debug().Str("tx", tx.Key()).Msg("Server transaction destroyed")
+	tx.log.Debug("Server transaction destroyed", "tx", tx.Key())
 }

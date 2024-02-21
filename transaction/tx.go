@@ -1,12 +1,11 @@
 package transaction
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-
-	"github.com/rs/zerolog"
 )
 
 type commonTx struct {
@@ -25,7 +24,7 @@ type commonTx struct {
 	fsmMu    sync.RWMutex
 	fsmState FsmContextState
 
-	log         zerolog.Logger
+	log         *slog.Logger
 	onTerminate FnTxTerminate
 }
 

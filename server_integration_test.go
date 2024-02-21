@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 // This will generate TLS certificates needed for test below
@@ -98,7 +98,7 @@ func TestSimpleCall(t *testing.T) {
 
 	srv, err := NewServer(ua)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Fail to setup dialog server")
+		t.Fatal("Fail to setup dialog server")
 	}
 
 	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {

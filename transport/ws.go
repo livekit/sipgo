@@ -6,18 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"github.com/emiago/sipgo/parser"
+	"github.com/emiago/sipgo/sip"
 )
 
 var (
@@ -29,7 +28,7 @@ var (
 // WS transport implementation
 type WSTransport struct {
 	parser    *parser.Parser
-	log       zerolog.Logger
+	log       *slog.Logger
 	transport string
 
 	pool   ConnectionPool
@@ -45,7 +44,7 @@ func NewWSTransport(par *parser.Parser) *WSTransport {
 	}
 
 	p.dialer.Protocols = WebSocketProtocols
-	p.log = log.Logger.With().Str("caller", "transport<WS>").Logger()
+	p.log = slog.With("caller", "transport<WS>")
 	return p
 }
 
@@ -64,7 +63,7 @@ func (t *WSTransport) Close() error {
 
 // Serve is direct way to provide conn on which this worker will listen
 func (t *WSTransport) Serve(l net.Listener, handler sip.MessageHandler) error {
-	t.log.Debug().Msgf("begin listening on %s %s", t.Network(), l.Addr().String())
+	t.log.Debug("begin listening on", "net", t.Network(), "addr", l.Addr())
 
 	// Prepare handshake header writer from http.Header mapping.
 	// Some phones want to return this
@@ -81,7 +80,7 @@ func (t *WSTransport) Serve(l net.Listener, handler sip.MessageHandler) error {
 
 	if SIPDebug {
 		u.OnHeader = func(key, value []byte) error {
-			log.Debug().Str(string(key), string(value)).Msg("non-websocket header:")
+			t.log.Debug("non-websocket header", string(key), string(value))
 			return nil
 		}
 	}
@@ -89,17 +88,17 @@ func (t *WSTransport) Serve(l net.Listener, handler sip.MessageHandler) error {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			t.log.Error().Err(err).Msg("Fail to accept conenction")
+			t.log.Error("Fail to accept conenction", "err", err)
 			return err
 		}
 
 		raddr := conn.RemoteAddr().String()
 
-		t.log.Debug().Str("addr", raddr).Msg("New connection accept")
+		t.log.Debug("New connection accept", "addr", raddr)
 
 		_, err = u.Upgrade(conn)
 		if err != nil {
-			t.log.Error().Err(err).Msg("Fail to upgrade")
+			t.log.Error("Fail to upgrade", "err", err)
 			continue
 		}
 
@@ -110,7 +109,7 @@ func (t *WSTransport) Serve(l net.Listener, handler sip.MessageHandler) error {
 func (t *WSTransport) initConnection(conn net.Conn, addr string, clientSide bool, handler sip.MessageHandler) Connection {
 	// // conn.SetKeepAlive(true)
 	// conn.SetKeepAlivePeriod(3 * time.Second)
-	t.log.Debug().Str("raddr", addr).Msg("New WS connection")
+	t.log.Debug("New WS connection", "raddr", addr)
 	c := &WSConnection{
 		Conn:       conn,
 		refcount:   1,
@@ -135,17 +134,17 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 		num, err := conn.Read(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
-				t.log.Debug().Err(err).Msg("Read connection closed")
+				t.log.Debug("Read connection closed", "err", err)
 				return
 			}
 
-			t.log.Error().Err(err).Msg("Got TCP error")
+			t.log.Error("Got TCP error", "err", err)
 			return
 		}
 
 		if num == 0 {
 			// // What todo
-			log.Debug().Msg("Got no bytes, sleeping")
+			t.log.Debug("Got no bytes, sleeping")
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -160,7 +159,7 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 		if len(data) <= 4 {
 			//One or 2 CRLF
 			if len(bytes.Trim(data, "\r\n")) == 0 {
-				t.log.Debug().Msg("Keep alive CRLF received")
+				t.log.Debug("Keep alive CRLF received")
 				continue
 			}
 		}
@@ -174,7 +173,7 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 func (t *WSTransport) parseStream(par *parser.ParserStream, data []byte, src string, handler sip.MessageHandler) {
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
-		t.log.Error().Err(err).Str("data", string(data)).Msg("failed to parse")
+		t.log.Error("failed to parse", "err", err, "data", string(data))
 		return
 	}
 
@@ -187,7 +186,7 @@ func (t *WSTransport) parseStream(par *parser.ParserStream, data []byte, src str
 func (t *WSTransport) parseFull(data []byte, src string, handler sip.MessageHandler) {
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
-		t.log.Error().Err(err).Str("data", string(data)).Msg("failed to parse")
+		t.log.Error("failed to parse", "err", err, "data", string(data))
 		return
 	}
 
@@ -234,14 +233,14 @@ func (t *WSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Messa
 
 func (t *WSTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
-	t.log.Debug().Str("raddr", addr).Msg("Dialing new connection")
+	t.log.Debug("Dialing new connection", "raddr", addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// How to define local interface
 	if laddr != nil {
-		log.Error().Str("laddr", laddr.String()).Msg("Dialing with local IP is not supported on ws")
+		t.log.Error("Dialing with local IP is not supported on ws", "laddr", laddr.String())
 	}
 
 	conn, _, _, err := t.dialer.Dial(ctx, "ws://"+addr)
@@ -266,7 +265,7 @@ func (c *WSConnection) Ref(i int) int {
 	c.refcount += i
 	ref := c.refcount
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.RemoteAddr().String()).Int("ref", ref).Msg("WS reference increment")
+	slog.Debug("WS reference increment", "ip", c.RemoteAddr(), "ref", ref)
 	return ref
 
 }
@@ -275,7 +274,7 @@ func (c *WSConnection) Close() error {
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.RemoteAddr().String()).Int("ref", c.refcount).Msg("WS doing hard close")
+	slog.Debug("WS doing hard close", "ip", c.RemoteAddr(), "ref", c.refcount)
 	return c.Conn.Close()
 }
 
@@ -284,16 +283,16 @@ func (c *WSConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.RemoteAddr().String()).Int("ref", c.refcount).Msg("WS reference decrement")
+	slog.Debug("WS reference decrement", "ip", c.RemoteAddr(), "ref", c.refcount)
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		log.Warn().Str("ip", c.RemoteAddr().String()).Int("ref", c.refcount).Msg("WS ref went negative")
+		slog.Warn("WS ref went negative", "ip", c.RemoteAddr(), "ref", c.refcount)
 		return 0, nil
 	}
-	log.Debug().Str("ip", c.RemoteAddr().String()).Int("ref", c.refcount).Msg("WS closing")
+	slog.Debug("WS closing", "ip", c.RemoteAddr(), "ref", c.refcount)
 	return ref, c.Conn.Close()
 }
 
@@ -313,7 +312,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 		}
 
 		if SIPDebug {
-			log.Debug().Str("caller", c.RemoteAddr().String()).Msgf("WS read connection header <- %s opcode=%d len=%d", c.Conn.RemoteAddr(), header.OpCode, header.Length)
+			slog.Debug("WS read connection header", "caller", c.RemoteAddr(), "op", header.OpCode, "sz", header.Length)
 		}
 
 		if header.OpCode == ws.OpClose {
@@ -335,7 +334,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 		// }
 
 		if SIPDebug {
-			log.Debug().Msgf("WS read %s <- %s:\n%s", c.Conn.LocalAddr().String(), c.Conn.RemoteAddr(), string(data))
+			slog.Debug("WS read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(data))
 		}
 
 		if header.Masked {
@@ -355,7 +354,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 
 func (c *WSConnection) Write(b []byte) (n int, err error) {
 	if SIPDebug {
-		log.Debug().Str("caller", c.LocalAddr().String()).Msgf("WS write -> %s:\n%s", c.Conn.RemoteAddr(), string(b))
+		slog.Debug("WS write", "caller", c.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b))
 	}
 
 	fs := ws.NewFrame(ws.OpText, true, b)

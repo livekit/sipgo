@@ -4,12 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
-
-	"github.com/rs/zerolog/log"
 )
 
 var ()
@@ -32,7 +31,7 @@ func NewTLSTransport(par *parser.Parser, dialTLSConf *tls.Config) *TLSTransport 
 
 	// p.rootPool = roots
 	p.tlsConf = dialTLSConf
-	p.log = log.Logger.With().Str("caller", "transport<TLS>").Logger()
+	p.log = slog.With("caller", "transport<TLS>")
 	return p
 }
 
@@ -65,7 +64,7 @@ func (t *TLSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 
 func (t *TLSTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
-	t.log.Debug().Str("raddr", addr).Msg("Dialing new connection")
+	t.log.Debug("Dialing new connection", "raddr", addr)
 
 	//TODO does this need to be each config
 	// SHould we make copy of rootPool?

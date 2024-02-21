@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 // TCP transport implementation
@@ -20,7 +18,7 @@ type TCPTransport struct {
 	addr      string
 	transport string
 	parser    *parser.Parser
-	log       zerolog.Logger
+	log       *slog.Logger
 
 	pool ConnectionPool
 }
@@ -31,7 +29,7 @@ func NewTCPTransport(par *parser.Parser) *TCPTransport {
 		pool:      NewConnectionPool(),
 		transport: TransportTCP,
 	}
-	p.log = log.Logger.With().Str("caller", "transport<TCP>").Logger()
+	p.log = slog.With("caller", "transport<TCP>")
 	return p
 }
 
@@ -52,11 +50,11 @@ func (t *TCPTransport) Close() error {
 
 // Serve is direct way to provide conn on which this worker will listen
 func (t *TCPTransport) Serve(l net.Listener, handler sip.MessageHandler) error {
-	t.log.Debug().Msgf("begin listening on %s %s", t.Network(), l.Addr().String())
+	t.log.Debug("begin listening on", "net", t.Network(), "addr", l.Addr())
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			t.log.Debug().Err(err).Msg("Fail to accept conenction")
+			t.log.Debug("Fail to accept conenction", "err", err)
 			return err
 		}
 
@@ -75,7 +73,7 @@ func (t *TCPTransport) GetConnection(addr string) (Connection, error) {
 	}
 	addr = raddr.String()
 
-	t.log.Debug().Str("addr", addr).Msg("Getting connection")
+	t.log.Debug("Getting connection", "addr", addr)
 
 	c := t.pool.Get(addr)
 	return c, nil
@@ -104,7 +102,7 @@ func (t *TCPTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 
 func (t *TCPTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
-	t.log.Debug().Str("raddr", addr).Msg("Dialing new connection")
+	t.log.Debug("Dialing new connection", "raddr", addr)
 
 	conn, err := net.DialTCP("tcp", laddr, raddr)
 	if err != nil {
@@ -127,7 +125,7 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 	// // conn.SetKeepAlive(true)
 	// conn.SetKeepAlivePeriod(3 * time.Second)
 
-	t.log.Debug().Str("raddr", addr).Msg("New connection")
+	t.log.Debug("New connection", "raddr", addr)
 	c := &TCPConnection{
 		Conn:     conn,
 		refcount: 1 + IdleConnection,
@@ -150,11 +148,11 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		num, err := conn.Read(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
-				t.log.Debug().Err(err).Msg("connection was closed")
+				t.log.Debug("connection was closed", "err", err)
 				return
 			}
 
-			t.log.Error().Err(err).Msg("Read error")
+			t.log.Error("Read error", "err", err)
 			return
 		}
 
@@ -167,7 +165,7 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		if len(data) <= 4 {
 			//One or 2 CRLF
 			if len(bytes.Trim(data, "\r\n")) == 0 {
-				t.log.Debug().Msg("Keep alive CRLF received")
+				t.log.Debug("Keep alive CRLF received")
 				continue
 			}
 		}
@@ -185,7 +183,7 @@ func (t *TCPTransport) parseStream(par *parser.ParserStream, data []byte, src st
 		return
 	}
 	if err != nil {
-		t.log.Error().Err(err).Str("data", string(data)).Msg("failed to parse")
+		t.log.Error("failed to parse", "err", err, "data", string(data))
 		return
 	}
 
@@ -198,7 +196,7 @@ func (t *TCPTransport) parseStream(par *parser.ParserStream, data []byte, src st
 func (t *TCPTransport) parseFull(data []byte, src string, handler sip.MessageHandler) {
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
-		t.log.Error().Err(err).Str("data", string(data)).Msg("failed to parse")
+		t.log.Error("failed to parse", "err", err, "data", string(data))
 		return
 	}
 
@@ -219,7 +217,7 @@ func (c *TCPConnection) Ref(i int) int {
 	c.refcount += i
 	ref := c.refcount
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.RemoteAddr().String()).Int("ref", ref).Msg("TCP reference increment")
+	slog.Debug("TCP reference increment", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return ref
 }
 
@@ -227,7 +225,7 @@ func (c *TCPConnection) Close() error {
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.RemoteAddr().String()).Int("ref", 0).Msg("TCP doing hard close")
+	slog.Debug("TCP doing hard close", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", 0)
 	return c.Conn.Close()
 }
 
@@ -236,17 +234,17 @@ func (c *TCPConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.RemoteAddr().String()).Int("ref", ref).Msg("TCP reference decrement")
+	slog.Debug("TCP reference decrement", "ip", c.LocalAddr(), "dst", c.RemoteAddr().String(), "ref", ref)
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		log.Warn().Str("ip", c.LocalAddr().String()).Str("dst", c.RemoteAddr().String()).Int("ref", ref).Msg("TCP ref went negative")
+		slog.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 		return 0, nil
 	}
 
-	log.Debug().Str("ip", c.LocalAddr().String()).Str("dst", c.RemoteAddr().String()).Int("ref", ref).Msg("TCP closing")
+	slog.Debug("TCP closing", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return ref, c.Conn.Close()
 }
 
@@ -254,7 +252,7 @@ func (c *TCPConnection) Read(b []byte) (n int, err error) {
 	// Some debug hook. TODO move to proper way
 	n, err = c.Conn.Read(b)
 	if SIPDebug {
-		log.Debug().Msgf("TCP read %s <- %s:\n%s", c.Conn.LocalAddr().String(), c.Conn.RemoteAddr(), string(b[:n]))
+		slog.Debug("TCP read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
 	}
 	return n, err
 }
@@ -263,7 +261,7 @@ func (c *TCPConnection) Write(b []byte) (n int, err error) {
 	// Some debug hook. TODO move to proper way
 	n, err = c.Conn.Write(b)
 	if SIPDebug {
-		log.Debug().Msgf("TCP write %s -> %s:\n%s", c.Conn.LocalAddr().String(), c.Conn.RemoteAddr(), string(b[:n]))
+		slog.Debug("TCP write", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
 	}
 	return n, err
 }

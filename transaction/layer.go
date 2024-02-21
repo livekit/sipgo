@@ -2,12 +2,10 @@ package transaction
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 type RequestHandler func(req *sip.Request, tx sip.ServerTransaction)
@@ -15,11 +13,11 @@ type UnhandledResponseHandler func(req *sip.Response)
 type ErrorHandler func(err error)
 
 func defaultRequestHandler(r *sip.Request, tx sip.ServerTransaction) {
-	log.Info().Str("caller", "transaction.Layer").Str("msg", r.Short()).Msg("Unhandled sip request. OnRequest handler not added")
+	slog.Info("Unhandled sip request. OnRequest handler not added", "caller", "transaction.Layer", "msg", r.Short())
 }
 
 func defaultUnhandledRespHandler(r *sip.Response) {
-	log.Info().Str("caller", "transaction.Layer").Str("msg", r.Short()).Msg("Unhandled sip response. UnhandledResponseHandler handler not added")
+	slog.Info("Unhandled sip response. UnhandledResponseHandler handler not added", "caller", "transaction.Layer", "msg", r.Short())
 }
 
 type Layer struct {
@@ -30,7 +28,7 @@ type Layer struct {
 	clientTransactions *transactionStore
 	serverTransactions *transactionStore
 
-	log zerolog.Logger
+	log *slog.Logger
 }
 
 func NewLayer(tpl *transport.Layer) *Layer {
@@ -42,7 +40,7 @@ func NewLayer(tpl *transport.Layer) *Layer {
 		reqHandler:    defaultRequestHandler,
 		unRespHandler: defaultUnhandledRespHandler,
 	}
-	txl.log = log.Logger.With().Str("caller", "transaction.Layer").Logger()
+	txl.log = slog.With("caller", "transaction.Layer")
 	//Send all transport messages to our transaction layer
 	tpl.OnMessage(txl.handleMessage)
 	return txl
@@ -68,7 +66,7 @@ func (txl *Layer) handleMessage(msg sip.Message) {
 		// TODO Consider making goroutine here already?
 		txl.handleResponse(msg)
 	default:
-		txl.log.Error().Msg("unsupported message, skip it")
+		txl.log.Error("unsupported message, skip it")
 		// todo pass up error?
 	}
 }
@@ -76,14 +74,14 @@ func (txl *Layer) handleMessage(msg sip.Message) {
 func (txl *Layer) handleRequest(req *sip.Request) {
 	key, err := MakeServerTxKey(req)
 	if err != nil {
-		txl.log.Error().Err(err).Msg("Server tx make key failed")
+		txl.log.Error("Server tx make key failed", "err", err)
 		return
 	}
 
 	tx, exists := txl.getServerTx(key)
 	if exists {
 		if err := tx.Receive(req); err != nil {
-			txl.log.Error().Err(err).Msg("Server tx failed to receive req")
+			txl.log.Error("Server tx failed to receive req", "err", err)
 		}
 		return
 	}
@@ -97,14 +95,14 @@ func (txl *Layer) handleRequest(req *sip.Request) {
 	// TODO: What if we are gettinb BYE and client closed connection
 	conn, err := txl.tpl.GetConnection(req.Transport(), req.Source())
 	if err != nil {
-		txl.log.Error().Err(err).Msg("Server tx get connection failed")
+		txl.log.Error("Server tx get connection failed", "err", err)
 		return
 	}
 
 	tx = NewServerTx(key, req, conn, txl.log)
 
 	if err := tx.Init(); err != nil {
-		txl.log.Error().Err(err).Msg("Server tx init failed")
+		txl.log.Error("Server tx init failed", "err", err)
 		return
 	}
 	// put tx to store, to match retransmitting requests later
@@ -117,7 +115,7 @@ func (txl *Layer) handleRequest(req *sip.Request) {
 func (txl *Layer) handleResponse(res *sip.Response) {
 	key, err := MakeClientTxKey(res)
 	if err != nil {
-		txl.log.Error().Err(err).Msg("Client tx make key failed")
+		txl.log.Error("Client tx make key failed", "err", err)
 		return
 	}
 
@@ -130,7 +128,7 @@ func (txl *Layer) handleResponse(res *sip.Response) {
 	}
 
 	if err := tx.Receive(res); err != nil {
-		txl.log.Error().Err(err).Msg("Client tx failed to receive response")
+		txl.log.Error("Client tx failed to receive response", "err", err)
 		return
 	}
 }
@@ -198,13 +196,13 @@ func (txl *Layer) Respond(res *sip.Response) (*ServerTx, error) {
 
 func (txl *Layer) clientTxTerminate(key string) {
 	if !txl.clientTransactions.drop(key) {
-		txl.log.Info().Str("key", key).Msg("Non existing client tx was removed")
+		txl.log.Info("Non existing client tx was removed", "key", key)
 	}
 }
 
 func (txl *Layer) serverTxTerminate(key string) {
 	if !txl.serverTransactions.drop(key) {
-		txl.log.Info().Str("key", key).Msg("Non existing server tx was removed")
+		txl.log.Info("Non existing server tx was removed", "key", key)
 	}
 }
 
@@ -234,7 +232,7 @@ func (txl *Layer) Close() {
 	for _, tx := range txl.serverTransactions.all() {
 		tx.Terminate()
 	}
-	txl.log.Debug().Msg("transaction layer closed")
+	txl.log.Debug("transaction layer closed")
 }
 
 func (txl *Layer) Transport() sip.Transport {

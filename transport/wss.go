@@ -4,13 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net"
 	"time"
 
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
-
-	"github.com/rs/zerolog/log"
 )
 
 // TLS transport implementation
@@ -32,7 +31,7 @@ func NewWSSTransport(par *parser.Parser, dialTLSConf *tls.Config) *WSSTransport 
 	p.dialer.TLSConfig = dialTLSConf
 
 	// p.tlsConf = dialTLSConf
-	p.log = log.Logger.With().Str("caller", "transport<WSS>").Logger()
+	p.log = slog.With("caller", "transport<WSS>")
 	return p
 }
 
@@ -66,7 +65,7 @@ func (t *WSSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 
 func (t *WSSTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
-	t.log.Debug().Str("raddr", addr).Msg("Dialing new connection")
+	t.log.Debug("Dialing new connection", "raddr", addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"sync"
@@ -12,9 +13,6 @@ import (
 
 	"github.com/emiago/sipgo/parser"
 	"github.com/emiago/sipgo/sip"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -41,7 +39,7 @@ type Layer struct {
 
 	handlers []sip.MessageHandler
 
-	log zerolog.Logger
+	log *slog.Logger
 
 	// ConnectionReuse will force connection reuse when passing request
 	ConnectionReuse bool
@@ -63,7 +61,7 @@ func NewLayer(
 		ConnectionReuse: true,
 	}
 
-	l.log = log.Logger.With().Str("caller", "transportlayer").Logger()
+	l.log = slog.With("caller", "transportlayer")
 
 	// Make some default transports available.
 	l.udp = NewUDPTransport(sipparser)
@@ -349,7 +347,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 						}
 						switch {
 						case ip.IsUnspecified():
-							l.log.Warn().Msg("External Via IP address is unspecified for UDP. Using 127.0.0.1")
+							l.log.Warn("External Via IP address is unspecified for UDP. Using 127.0.0.1")
 							viaHop.Host = "127.0.0.1" // TODO use resolve IP
 						default:
 							viaHop.Host = host
@@ -361,7 +359,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 			viaHop.Port = port
 			return c, nil
 		}
-		l.log.Debug().Str("addr", addr).Msg("Active connection not found")
+		l.log.Debug("Active connection not found", "addr", addr)
 	}
 
 	laddr := Addr{
@@ -370,7 +368,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		Port: viaHop.Port,
 	}
 
-	l.log.Debug().Str("host", viaHop.Host).Int("port", viaHop.Port).Msg("Via header used for creating connection")
+	l.log.Debug("Via header used for creating connection", "host", viaHop.Host, "port", viaHop.Port)
 
 	c, err = transport.CreateConnection(laddr, raddr, l.handleMessage)
 	if err != nil {
@@ -406,7 +404,7 @@ func (l *Layer) resolveAddr(ctx context.Context, network string, host string, ad
 		addr.IP = ip.IP
 		return nil
 	}
-	log.Debug().Err(err).Msg("IP addr resolving failed, doing via dns resolver")
+	l.log.Debug("IP addr resolving failed, doing via dns resolver", "err", err)
 
 	var lookupnet string
 	switch network {
@@ -447,7 +445,7 @@ func (l *Layer) getConnection(network, addr string) (Connection, error) {
 }
 
 func (l *Layer) Close() error {
-	l.log.Debug().Msg("Layer is closing")
+	l.log.Debug("Layer is closing")
 	var werr error
 	for _, t := range l.transports {
 		if err := t.Close(); err != nil {

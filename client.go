@@ -2,13 +2,13 @@ package sipgo
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
+
+	"github.com/google/uuid"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/emiago/sipgo/transport"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func Init() {
@@ -19,13 +19,13 @@ type Client struct {
 	*UserAgent
 	host string
 	port int
-	log  zerolog.Logger
+	log  *slog.Logger
 }
 
 type ClientOption func(c *Client) error
 
 // WithClientLogger allows customizing client logger
-func WithClientLogger(logger zerolog.Logger) ClientOption {
+func WithClientLogger(logger *slog.Logger) ClientOption {
 	return func(s *Client) error {
 		s.log = logger
 		return nil
@@ -69,7 +69,7 @@ func NewClient(ua *UserAgent, options ...ClientOption) (*Client, error) {
 	c := &Client{
 		UserAgent: ua,
 		host:      ua.GetIP().String(),
-		log:       log.Logger.With().Str("caller", "Client").Logger(),
+		log:       slog.With("caller", "Client"),
 	}
 
 	for _, o := range options {
