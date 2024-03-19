@@ -1,6 +1,8 @@
 module sipgo/example/register
 
-go 1.19
+go 1.21
+
+toolchain go1.22.1
 
 require (
 	github.com/emiago/sipgo v0.7.1
