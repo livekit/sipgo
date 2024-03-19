@@ -178,10 +178,10 @@ func (tx *ClientTx) stateTerminated(s FsmInput) FsmInput {
 // Define actions
 func (tx *ClientTx) actInviteResend() FsmInput {
 	tx.mu.Lock()
-
-	tx.timer_a_time *= 2
-	tx.timer_a.Reset(tx.timer_a_time)
-
+	if tx.timer_a != nil {
+		tx.timer_a_time *= 2
+		tx.timer_a.Reset(tx.timer_a_time)
+	}
 	tx.mu.Unlock()
 
 	tx.resend()
@@ -198,14 +198,14 @@ func (tx *ClientTx) actResend() FsmInput {
 	// tx.Log().Debug("actResend")
 
 	tx.mu.Lock()
-
-	tx.timer_a_time *= 2
-	// For non-INVITE, cap timer A at T2 seconds.
-	if tx.timer_a_time > T2 {
-		tx.timer_a_time = T2
+	if tx.timer_a != nil {
+		tx.timer_a_time *= 2
+		// For non-INVITE, cap timer A at T2 seconds.
+		if tx.timer_a_time > T2 {
+			tx.timer_a_time = T2
+		}
+		tx.timer_a.Reset(tx.timer_a_time)
 	}
-	tx.timer_a.Reset(tx.timer_a_time)
-
 	tx.mu.Unlock()
 
 	tx.resend()
