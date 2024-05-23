@@ -107,3 +107,7 @@ func (ua *UserAgent) GetIP() net.IP {
 func (ua *UserAgent) TransportLayer() *transport.Layer {
 	return ua.tp
 }
+
+func (ua *UserAgent) TransactionLayer() *transaction.Layer {
+	return ua.tx
+}
