@@ -31,7 +31,7 @@ type WSTransport struct {
 	log       *slog.Logger
 	transport string
 
-	pool   ConnectionPool
+	pool   *ConnectionPool
 	dialer ws.Dialer
 }
 

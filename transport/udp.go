@@ -28,7 +28,8 @@ type UDPTransport struct {
 	// listener *net.UDPConn
 	parser *parser.Parser
 
-	pool      ConnectionPool
+	pool      *ConnectionPool
+	mu        sync.Mutex
 	listeners []*UDPConnection
 
 	log *slog.Logger
@@ -59,7 +60,6 @@ func (t *UDPTransport) Close() error {
 // ServeConn is direct way to provide conn on which this worker will listen
 // UDPReadWorkers are used to create more workers
 func (t *UDPTransport) Serve(conn net.PacketConn, handler sip.MessageHandler) error {
-
 	t.log.Debug("begin listening on", "net", t.Network(), "addr", conn.LocalAddr())
 	/*
 		Multiple readers makes problem, which can delay writing response
@@ -67,7 +67,9 @@ func (t *UDPTransport) Serve(conn net.PacketConn, handler sip.MessageHandler) er
 
 	c := &UDPConnection{PacketConn: conn}
 
+	t.mu.Lock()
 	t.listeners = append(t.listeners, c)
+	t.mu.Unlock()
 
 	for i := 0; i < UDPReadWorkers-1; i++ {
 		go t.readConnection(c, handler)
@@ -92,6 +94,8 @@ func (t *UDPTransport) GetConnection(addr string) (Connection, error) {
 		return conn, nil
 	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	// TODO: How to pick listener. Some address range mapping
 	if len(t.listeners) > 0 {
 		return t.listeners[0], nil

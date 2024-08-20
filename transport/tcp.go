@@ -20,7 +20,7 @@ type TCPTransport struct {
 	parser    *parser.Parser
 	log       *slog.Logger
 
-	pool ConnectionPool
+	pool *ConnectionPool
 }
 
 func NewTCPTransport(par *parser.Parser) *TCPTransport {
