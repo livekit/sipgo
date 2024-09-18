@@ -178,6 +178,7 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 }
 
 func (t *TCPTransport) parseStream(par *parser.ParserStream, data []byte, src string, handler sip.MessageHandler) {
+	bytesPacketSize.WithLabelValues("tcp", "read").Observe(float64(len(data)))
 	msg, err := par.ParseSIPStream(data)
 	if err == parser.ErrParseSipPartial {
 		return
@@ -272,6 +273,8 @@ func (c *TCPConnection) WriteMsg(msg sip.Message) error {
 	buf.Reset()
 	msg.StringWrite(buf)
 	data := buf.Bytes()
+
+	bytesPacketSize.WithLabelValues("tcp", "write").Observe(float64(len(data)))
 
 	n, err := c.Write(data)
 	if err != nil {

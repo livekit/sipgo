@@ -231,6 +231,8 @@ func (t *UDPTransport) parseAndHandle(data []byte, src string, handler sip.Messa
 		}
 	}
 
+	bytesPacketSize.WithLabelValues("udp", "read").Observe(float64(len(data)))
+
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
 		t.log.Error("failed to parse", "err", err, "data", string(data))
@@ -344,6 +346,8 @@ func (c *UDPConnection) WriteMsg(msg sip.Message) error {
 	buf.Reset()
 	msg.StringWrite(buf)
 	data := buf.Bytes()
+
+	bytesPacketSize.WithLabelValues("udp", "write").Observe(float64(len(data)))
 
 	if len(data) > UDPMTUSize-200 {
 		return ErrUDPMTUCongestion
