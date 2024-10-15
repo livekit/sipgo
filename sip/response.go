@@ -222,9 +222,11 @@ func NewResponseFromRequest(
 	case 100:
 		CopyHeaders("Timestamp", req, res)
 	default:
-		if _, ok := res.to.Params["tag"]; !ok {
-			uuid, _ := uuid.NewV4()
-			res.to.Params["tag"] = uuid.String()
+		if res.to != nil {
+			if _, ok := res.to.Params["tag"]; !ok {
+				uuid, _ := uuid.NewV4()
+				res.to.Params["tag"] = uuid.String()
+			}
 		}
 	}
 
