@@ -9,8 +9,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
+	sipgo "github.com/emiago/sipgo/sip"
+
+	"github.com/livekit/sipgo/sip"
 )
 
 var (
@@ -26,7 +27,7 @@ var (
 // UDP transport implementation
 type UDPTransport struct {
 	// listener *net.UDPConn
-	parser *parser.Parser
+	parser *sipgo.Parser
 
 	pool      *ConnectionPool
 	mu        sync.Mutex
@@ -35,7 +36,7 @@ type UDPTransport struct {
 	log *slog.Logger
 }
 
-func NewUDPTransport(par *parser.Parser) *UDPTransport {
+func NewUDPTransport(par *sipgo.Parser) *UDPTransport {
 	p := &UDPTransport{
 		parser: par,
 		pool:   NewConnectionPool(),

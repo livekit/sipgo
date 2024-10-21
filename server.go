@@ -10,8 +10,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 )
 
 // RequestHandler is a callback that will be called on the incoming request

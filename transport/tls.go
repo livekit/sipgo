@@ -7,11 +7,10 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
-)
+	sipgo "github.com/emiago/sipgo/sip"
 
-var ()
+	"github.com/livekit/sipgo/sip"
+)
 
 // TLS transport implementation
 type TLSTransport struct {
@@ -22,7 +21,7 @@ type TLSTransport struct {
 }
 
 // NewTLSTransport needs dialTLSConf for creating connections when dialing
-func NewTLSTransport(par *parser.Parser, dialTLSConf *tls.Config) *TLSTransport {
+func NewTLSTransport(par *sipgo.Parser, dialTLSConf *tls.Config) *TLSTransport {
 	tcptrans := NewTCPTransport(par)
 	tcptrans.transport = TransportTLS //Override transport
 	p := &TLSTransport{

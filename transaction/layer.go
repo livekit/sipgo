@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 )
 
 type RequestHandler func(req *sip.Request, tx sip.ServerTransaction)

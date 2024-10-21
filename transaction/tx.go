@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 )
 
 type commonTx struct {

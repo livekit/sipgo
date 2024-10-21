@@ -4,7 +4,7 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/sip"
 )
 
 var (

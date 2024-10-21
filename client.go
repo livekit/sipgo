@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 )
 
 func Init() {
@@ -140,13 +140,13 @@ func clientRequestBuildReq(c *Client, req *sip.Request) error {
 	// the following header fields: To, From, CSeq, Call-ID, Max-Forwards,
 	// and Via;
 
-	if _, exists := req.Via(); !exists {
+	if req.Via() == nil {
 		// Multi VIA value must be manually added
 		ClientRequestAddVia(c, req)
 	}
 
 	// From and To headers should not contain Port numbers, headers, uri params
-	if _, exists := req.From(); !exists {
+	if req.From() == nil {
 		from := sip.FromHeader{
 			DisplayName: c.name,
 			Address: sip.Uri{
@@ -161,10 +161,10 @@ func clientRequestBuildReq(c *Client, req *sip.Request) error {
 		req.AppendHeader(&from)
 	}
 
-	if _, exists := req.To(); !exists {
+	if req.To() == nil {
 		to := sip.ToHeader{
 			Address: sip.Uri{
-				Encrypted: req.Recipient.Encrypted,
+				Scheme:    req.Recipient.Scheme,
 				User:      req.Recipient.User,
 				Host:      req.Recipient.Host,
 				UriParams: sip.NewParams(),
@@ -175,7 +175,7 @@ func clientRequestBuildReq(c *Client, req *sip.Request) error {
 		req.AppendHeader(&to)
 	}
 
-	if _, exists := req.CallID(); !exists {
+	if req.CallID() == nil {
 		uuid, err := uuid.NewRandom()
 		if err != nil {
 			return err
@@ -186,7 +186,7 @@ func clientRequestBuildReq(c *Client, req *sip.Request) error {
 
 	}
 
-	if _, exists := req.CSeq(); !exists {
+	if req.CSeq() == nil {
 		// TODO consider atomic increase cseq within Dialog
 		cseq := sip.CSeqHeader{
 			SeqNo:      1,
@@ -195,7 +195,7 @@ func clientRequestBuildReq(c *Client, req *sip.Request) error {
 		req.AppendHeader(&cseq)
 	}
 
-	if _, exists := req.MaxForwards(); !exists {
+	if req.MaxForwards() == nil {
 		maxfwd := sip.MaxForwardsHeader(70)
 		req.AppendHeader(&maxfwd)
 	}
@@ -221,8 +221,9 @@ func ClientRequestAddVia(c *Client, r *sip.Request) error {
 	// NOTE: Consider lenght of branch configurable
 	newvia.Params.Add("branch", sip.GenerateBranchN(16))
 
-	if via, exists := r.Via(); exists {
-		// newvia.Params.Add("branch", via.Params["branch"])
+	if via := r.Via(); via != nil {
+		// https://datatracker.ietf.org/doc/html/rfc3581#section-6
+		// As proxy rport and received must be fullfiled
 		if via.Params.Has("rport") {
 			h, p, _ := net.SplitHostPort(r.Source())
 			via.Params.Add("rport", p)
@@ -260,8 +261,8 @@ func ClientRequestAddRecordRoute(c *Client, r *sip.Request) error {
 // ClientRequestDecreaseMaxForward should be used when forwarding request. It decreases max forward
 // in case of 0 it returnes error
 func ClientRequestDecreaseMaxForward(c *Client, r *sip.Request) error {
-	maxfwd, exists := r.MaxForwards()
-	if !exists {
+	maxfwd := r.MaxForwards()
+	if maxfwd == nil {
 		// TODO, should we return error here
 		return nil
 	}

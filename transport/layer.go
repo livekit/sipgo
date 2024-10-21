@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
+	sipgo "github.com/emiago/sipgo/sip"
+
+	"github.com/livekit/sipgo/sip"
 )
 
 var (
@@ -51,7 +52,7 @@ type Layer struct {
 // tls config - can be nil to use default tls
 func NewLayer(
 	dnsResolver *net.Resolver,
-	sipparser *parser.Parser,
+	sipparser *sipgo.Parser,
 	tlsConfig *tls.Config,
 ) *Layer {
 	l := &Layer{
@@ -307,8 +308,8 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 	//   Before a request is sent, the client transport MUST insert a value of
 	//   the "sent-by" field into the Via header field.  This field contains
 	//   an IP address or host name, and port.
-	viaHop, exists := req.Via()
-	if !exists {
+	viaHop := req.Via()
+	if viaHop == nil {
 		// NOTE: We are enforcing that client creates this header
 		return nil, fmt.Errorf("missing Via Header")
 	}

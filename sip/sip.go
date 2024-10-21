@@ -2,7 +2,8 @@ package sip
 
 import (
 	"fmt"
-	"strings"
+
+	sipgo "github.com/emiago/sipgo/sip"
 )
 
 const (
@@ -28,27 +29,16 @@ type Parser interface {
 
 // GenerateBranch returns random unique branch ID.
 func GenerateBranch() string {
-	return GenerateBranchN(16)
+	return sipgo.GenerateBranch()
 }
 
 // GenerateBranchN returns random unique branch ID in format MagicCookie.<n chars>
 func GenerateBranchN(n int) string {
-	sb := &strings.Builder{}
-	generateBranchStringWrite(sb, n)
-	return sb.String()
-}
-
-func generateBranchStringWrite(sb *strings.Builder, n int) {
-	sb.Grow(len(RFC3261BranchMagicCookie) + n + 1)
-	sb.WriteString(RFC3261BranchMagicCookie)
-	sb.WriteString(".")
-	RandStringBytesMask(sb, n)
+	return sipgo.GenerateBranchN(n)
 }
 
 func GenerateTagN(n int) string {
-	sb := &strings.Builder{}
-	RandStringBytesMask(sb, n)
-	return sb.String()
+	return sipgo.GenerateTagN(n)
 }
 
 // DefaultPort returns transport default port by network.
@@ -70,19 +60,11 @@ func DefaultPort(transport string) int {
 }
 
 func MakeDialogIDFromRequest(msg *Request) (string, error) {
-	var callID, innerID, externalID string = "", "", ""
-	if err := getDialogIDFromMessage(msg, &callID, &innerID, &externalID); err != nil {
-		return "", err
-	}
-	return MakeDialogID(callID, innerID, externalID), nil
+	return sipgo.MakeDialogIDFromRequest(msg)
 }
 
 func MakeDialogIDFromResponse(msg *Response) (string, error) {
-	var callID, innerID, externalID string = "", "", ""
-	if err := getDialogIDFromMessage(msg, &callID, &externalID, &innerID); err != nil {
-		return "", err
-	}
-	return MakeDialogID(callID, innerID, externalID), nil
+	return sipgo.MakeDialogIDFromResponse(msg)
 }
 
 // MakeDialogIDFromMessage creates dialog ID of message.
@@ -91,44 +73,13 @@ func MakeDialogIDFromResponse(msg *Response) (string, error) {
 func MakeDialogIDFromMessage(msg Message) (string, error) {
 	switch m := msg.(type) {
 	case *Request:
-		return MakeDialogIDFromRequest(m)
+		return sipgo.MakeDialogIDFromRequest(m)
 	case *Response:
-		return MakeDialogIDFromResponse(m)
+		return sipgo.MakeDialogIDFromResponse(m)
 	}
 	return "", fmt.Errorf("unknown message format")
 }
 
-func getDialogIDFromMessage(msg Message, callId, innerId, externalId *string) error {
-	callID, ok := msg.CallID()
-	if !ok {
-		return fmt.Errorf("missing Call-ID header")
-	}
-
-	to, ok := msg.To()
-	if !ok {
-		return fmt.Errorf("missing To header")
-	}
-
-	toTag, ok := to.Params.Get("tag")
-	if !ok {
-		return fmt.Errorf("missing tag param in To header")
-	}
-
-	from, ok := msg.From()
-	if !ok {
-		return fmt.Errorf("missing From header")
-	}
-
-	fromTag, ok := from.Params.Get("tag")
-	if !ok {
-		return fmt.Errorf("missing tag param in From header")
-	}
-	*callId = string(*callID)
-	*innerId = toTag
-	*externalId = fromTag
-	return nil
-}
-
 func MakeDialogID(callID, innerID, externalID string) string {
-	return strings.Join([]string{callID, innerID, externalID}, "__")
+	return sipgo.MakeDialogID(callID, innerID, externalID)
 }

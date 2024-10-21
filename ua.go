@@ -4,10 +4,11 @@ import (
 	"crypto/tls"
 	"net"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transaction"
-	"github.com/emiago/sipgo/transport"
+	sipgo "github.com/emiago/sipgo/sip"
+
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transaction"
+	"github.com/livekit/sipgo/transport"
 )
 
 type UserAgent struct {
@@ -81,7 +82,7 @@ func NewUA(options ...UserAgentOption) (*UserAgent, error) {
 	}
 
 	// TODO export parser to be configurable
-	ua.tp = transport.NewLayer(ua.dnsResolver, parser.NewParser(), ua.tlsConfig)
+	ua.tp = transport.NewLayer(ua.dnsResolver, sipgo.NewParser(), ua.tlsConfig)
 	ua.tx = transaction.NewLayer(ua.tp)
 	return ua, nil
 }

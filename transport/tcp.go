@@ -9,21 +9,22 @@ import (
 	"net"
 	"sync"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
+	sipgo "github.com/emiago/sipgo/sip"
+
+	"github.com/livekit/sipgo/sip"
 )
 
 // TCP transport implementation
 type TCPTransport struct {
 	addr      string
 	transport string
-	parser    *parser.Parser
+	parser    *sipgo.Parser
 	log       *slog.Logger
 
 	pool *ConnectionPool
 }
 
-func NewTCPTransport(par *parser.Parser) *TCPTransport {
+func NewTCPTransport(par *sipgo.Parser) *TCPTransport {
 	p := &TCPTransport{
 		parser:    par,
 		pool:      NewConnectionPool(),
@@ -177,10 +178,10 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	}
 }
 
-func (t *TCPTransport) parseStream(par *parser.ParserStream, data []byte, src string, handler sip.MessageHandler) {
+func (t *TCPTransport) parseStream(par *sipgo.ParserStream, data []byte, src string, handler sip.MessageHandler) {
 	bytesPacketSize.WithLabelValues("tcp", "read").Observe(float64(len(data)))
-	msg, err := par.ParseSIPStream(data)
-	if err == parser.ErrParseSipPartial {
+	msgs, err := par.ParseSIPStream(data)
+	if err == sipgo.ErrParseSipPartial {
 		return
 	}
 	if err != nil {
@@ -188,9 +189,11 @@ func (t *TCPTransport) parseStream(par *parser.ParserStream, data []byte, src st
 		return
 	}
 
-	msg.SetTransport(t.Network())
-	msg.SetSource(src)
-	handler(msg)
+	for _, msg := range msgs {
+		msg.SetTransport(t.Network())
+		msg.SetSource(src)
+		handler(msg)
+	}
 }
 
 // TODO use this when message size limit is defined

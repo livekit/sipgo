@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/sip"
 )
 
 // This will generate TLS certificates needed for test below

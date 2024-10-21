@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/emiago/sipgo/fakes"
-	"github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/fakes"
+	"github.com/livekit/sipgo/sip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

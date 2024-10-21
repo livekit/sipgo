@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transport"
 )
 
 type FSMfunc func() FSMfunc

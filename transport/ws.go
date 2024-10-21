@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	sipgo "github.com/emiago/sipgo/sip"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/sip"
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 
 // WS transport implementation
 type WSTransport struct {
-	parser    *parser.Parser
+	parser    *sipgo.Parser
 	log       *slog.Logger
 	transport string
 
@@ -35,7 +35,7 @@ type WSTransport struct {
 	dialer ws.Dialer
 }
 
-func NewWSTransport(par *parser.Parser) *WSTransport {
+func NewWSTransport(par *sipgo.Parser) *WSTransport {
 	p := &WSTransport{
 		parser:    par,
 		pool:      NewConnectionPool(),
@@ -170,7 +170,7 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 }
 
 // TODO: Try to reuse this from TCP transport as func are same
-func (t *WSTransport) parseStream(par *parser.ParserStream, data []byte, src string, handler sip.MessageHandler) {
+func (t *WSTransport) parseStream(par *sipgo.ParserStream, data []byte, src string, handler sip.MessageHandler) {
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
 		t.log.Error("failed to parse", "err", err, "data", string(data))

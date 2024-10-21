@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/sip"
 )
 
 const (
@@ -52,13 +52,13 @@ type FnTxTerminate func(key string)
 
 // MakeServerTxKey creates server key for matching retransmitting requests - RFC 3261 17.2.3.
 func MakeServerTxKey(msg sip.Message) (string, error) {
-	firstViaHop, ok := msg.Via()
-	if !ok {
+	firstViaHop := msg.Via()
+	if firstViaHop == nil {
 		return "", fmt.Errorf("'Via' header not found or empty in message '%s'", sip.MessageShortString(msg))
 	}
 
-	cseq, ok := msg.CSeq()
-	if !ok {
+	cseq := msg.CSeq()
+	if cseq == nil {
 		return "", fmt.Errorf("'CSeq' header not found in message '%s'", sip.MessageShortString(msg))
 	}
 	method := cseq.MethodName
@@ -100,16 +100,16 @@ func MakeServerTxKey(msg sip.Message) (string, error) {
 		return builder.String(), nil
 	}
 	// RFC 2543 compliant
-	from, ok := msg.From()
-	if !ok {
+	from := msg.From()
+	if from == nil {
 		return "", fmt.Errorf("'From' header not found in message '%s'", sip.MessageShortString(msg))
 	}
 	fromTag, ok := from.Params.Get("tag")
 	if !ok {
 		return "", fmt.Errorf("'tag' param not found in 'From' header of message '%s'", sip.MessageShortString(msg))
 	}
-	callId, ok := msg.CallID()
-	if !ok {
+	callId := msg.CallID()
+	if callId == nil {
 		return "", fmt.Errorf("'Call-ID' header not found in message '%s'", sip.MessageShortString(msg))
 	}
 
@@ -129,8 +129,8 @@ func MakeServerTxKey(msg sip.Message) (string, error) {
 
 // MakeClientTxKey creates client key for matching responses - RFC 3261 17.1.3.
 func MakeClientTxKey(msg sip.Message) (string, error) {
-	cseq, ok := msg.CSeq()
-	if !ok {
+	cseq := msg.CSeq()
+	if cseq == nil {
 		return "", fmt.Errorf("'CSeq' header not found in message '%s'", sip.MessageShortString(msg))
 	}
 	method := cseq.MethodName
@@ -138,8 +138,8 @@ func MakeClientTxKey(msg sip.Message) (string, error) {
 		method = sip.INVITE
 	}
 
-	firstViaHop, ok := msg.Via()
-	if !ok {
+	firstViaHop := msg.Via()
+	if firstViaHop == nil {
 		return "", fmt.Errorf("'Via' header not found or empty in message '%s'", sip.MessageShortString(msg))
 	}
 

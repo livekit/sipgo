@@ -10,18 +10,18 @@ import (
 	"testing"
 	"time"
 
+	sipgo "github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/emiago/sipgo/fakes"
-	"github.com/emiago/sipgo/parser"
-	"github.com/emiago/sipgo/sip"
-	"github.com/emiago/sipgo/transaction"
-	"github.com/emiago/sipgo/transport"
+	"github.com/livekit/sipgo/fakes"
+	"github.com/livekit/sipgo/sip"
+	"github.com/livekit/sipgo/transaction"
+	"github.com/livekit/sipgo/transport"
 )
 
 func testCreateMessage(t testing.TB, rawMsg []string) sip.Message {
-	msg, err := parser.ParseMessage([]byte(strings.Join(rawMsg, "\r\n")))
+	msg, err := sipgo.ParseMessage([]byte(strings.Join(rawMsg, "\r\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func testCreateMessage(t testing.TB, rawMsg []string) sip.Message {
 }
 
 func createSimpleRequest(method sip.RequestMethod, sender sip.Uri, recipment sip.Uri, transport string) *sip.Request {
-	req := sip.NewRequest(method, &recipment)
+	req := sip.NewRequest(method, recipment)
 	params := sip.NewParams()
 	params["branch"] = sip.GenerateBranch()
 	req.AppendHeader(&sip.ViaHeader{
@@ -121,7 +121,7 @@ func TestUDPUAS(t *testing.T) {
 	require.Nil(t, err)
 	defer srv.Close()
 
-	p := parser.NewParser()
+	p := sipgo.NewParser()
 
 	serverReader, serverWriter := io.Pipe()
 	client1Reader, client1Writer := io.Pipe()
@@ -219,7 +219,7 @@ func TestTCPUAS(t *testing.T) {
 	require.Nil(t, err)
 	defer srv.Close()
 
-	p := parser.NewParser()
+	p := sipgo.NewParser()
 
 	serverReader, serverWriter := io.Pipe()
 	client1Reader, client1Writer := io.Pipe()

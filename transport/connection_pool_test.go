@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/emiago/sipgo/fakes"
+	"github.com/livekit/sipgo/fakes"
 )
 
 func TestConnectionPool(t *testing.T) {
