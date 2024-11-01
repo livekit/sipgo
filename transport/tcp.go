@@ -85,19 +85,12 @@ func (t *TCPTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 	// if err != nil {
 	// 	return nil, err
 	// }
-	var tladdr *net.TCPAddr = nil
-	if laddr.IP != nil {
-		tladdr = &net.TCPAddr{
-			IP:   laddr.IP,
-			Port: laddr.Port,
-		}
-	}
 
 	traddr := &net.TCPAddr{
 		IP:   raddr.IP,
 		Port: raddr.Port,
 	}
-	return t.createConnection(tladdr, traddr, handler)
+	return t.createConnection(nil, traddr, handler)
 }
 
 func (t *TCPTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
