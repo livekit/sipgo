@@ -164,6 +164,12 @@ func (p *ParserStream) ParseSIPStream(data []byte) (msg sip.Message, err error) 
 	}(reader)
 
 	switch err {
+	case nil:
+		reader.Reset()
+		reader.Write(unparsed)
+		p.state = stateStartLine
+		p.msg = nil
+		return msg, err
 	case ErrParseLineNoCRLF, ErrParseReadBodyIncomplete:
 		reader.Reset()
 		reader.Write(unparsed)
