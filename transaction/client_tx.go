@@ -30,7 +30,7 @@ func NewClientTx(key string, origin *sip.Request, conn transport.Connection, log
 	// tx.conn = tpl
 	tx.conn = conn
 	// buffer chan - about ~10 retransmit responses
-	tx.responses = make(chan *sip.Response)
+	tx.responses = make(chan *sip.Response, 10)
 	tx.done = make(chan struct{})
 	tx.log = logger
 
@@ -215,9 +215,10 @@ func (tx *ClientTx) resend() {
 }
 
 func (tx *ClientTx) passUp() {
+	// Hold lock during channel send to prevent race with delete.
 	tx.mu.RLock()
+	defer tx.mu.RUnlock()
 	lastResp := tx.lastResp
-	tx.mu.RUnlock()
 
 	if lastResp != nil {
 		select {
