@@ -74,15 +74,15 @@ func (t *transportTCP) CreateConnection(ctx context.Context, laddr Addr, raddr A
 	// 	return nil, err
 	// }
 	var tladdr *net.TCPAddr = nil
-	if laddr.IP != nil {
+	if laddr.IP.IsValid() {
 		tladdr = &net.TCPAddr{
-			IP:   laddr.IP,
+			IP:   laddr.IP.AsSlice(),
 			Port: laddr.Port,
 		}
 	}
 
 	traddr := &net.TCPAddr{
-		IP:   raddr.IP,
+		IP:   raddr.IP.AsSlice(),
 		Port: raddr.Port,
 	}
 	return t.createConnection(ctx, tladdr, traddr, handler)

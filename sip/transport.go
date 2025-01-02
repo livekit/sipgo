@@ -3,6 +3,7 @@ package sip
 import (
 	"context"
 	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -72,17 +73,21 @@ func DefaultPort(transport string) int {
 }
 
 type Addr struct {
-	IP       net.IP // Must be in IP format
+	IP       netip.Addr // Must be in IP format
 	Port     int
 	Hostname string // Original hostname before resolved to IP
 }
 
+func (a *Addr) AddrPort() netip.AddrPort {
+	return netip.AddrPortFrom(a.IP, uint16(a.Port))
+}
+
 func (a *Addr) String() string {
-	if a.IP == nil {
+	if !a.IP.IsValid() {
 		return net.JoinHostPort(a.Hostname, strconv.Itoa(a.Port))
 	}
 
-	return net.JoinHostPort(a.IP.String(), strconv.Itoa(a.Port))
+	return a.AddrPort().String()
 }
 
 func ParseAddr(addr string) (host string, port int, err error) {

@@ -56,7 +56,7 @@ func (t *transportWSS) CreateConnection(ctx context.Context, laddr Addr, raddr A
 	log := &t.log
 
 	// Must have IP resolved
-	if raddr.IP == nil {
+	if !raddr.IP.IsValid() {
 		return nil, fmt.Errorf("remote address IP not resolved")
 	}
 
@@ -70,15 +70,15 @@ func (t *transportWSS) CreateConnection(ctx context.Context, laddr Addr, raddr A
 
 	// USe default unless local address is set
 	var tladdr *net.TCPAddr = nil
-	if laddr.IP != nil {
+	if laddr.IP.IsValid() {
 		tladdr = &net.TCPAddr{
-			IP:   laddr.IP,
+			IP:   laddr.IP.AsSlice(),
 			Port: laddr.Port,
 		}
 	}
 
 	traddr := &net.TCPAddr{
-		IP:   raddr.IP,
+		IP:   raddr.IP.AsSlice(),
 		Port: raddr.Port,
 	}
 

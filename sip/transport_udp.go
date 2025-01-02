@@ -101,7 +101,7 @@ func (t *transportUDP) createConnection(ctx context.Context, laddr Addr, raddr A
 	lc := &net.ListenConfig{}
 
 	protocol := "udp"
-	if laddr.IP == nil && raddr.IP.To4() != nil {
+	if !laddr.IP.IsValid() && raddr.IP.Is4() {
 		// Use IPV4 if remote is same
 		protocol = "udp4"
 	}

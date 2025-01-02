@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -297,17 +298,17 @@ func (l *TransportLayer) ClientRequestConnection(ctx context.Context, req *Reque
 	// dns srv lookup
 
 	raddr := Addr{
-		IP:       net.ParseIP(host),
 		Port:     port,
 		Hostname: host,
 	}
+	raddr.IP, _ = netip.ParseAddr(host)
 
 	if raddr.Port == 0 {
 		// Use default port for transport
 		raddr.Port = DefaultPort(network)
 	}
 
-	if raddr.IP == nil {
+	if !raddr.IP.IsValid() {
 		if err := l.resolveAddr(ctx, network, host, &raddr); err != nil {
 			return nil, err
 		}
@@ -330,14 +331,14 @@ func (l *TransportLayer) ClientRequestConnection(ctx context.Context, req *Reque
 	}
 
 	laddr := Addr{
-		IP: net.ParseIP(viaHop.Host),
 		// IP:   lIP,
 		Port: viaHop.Port,
 	}
+	laddr.IP, _ = netip.ParseAddr(viaHop.Host)
 
 	// Always check does connection exists if full IP:port provided
 	// This is probably client forcing host:port
-	if laddr.IP != nil && laddr.Port > 0 {
+	if laddr.IP.IsValid() && laddr.Port > 0 {
 		c, _ = transport.GetConnection(laddr.String())
 		if c != nil {
 			return c, nil
@@ -402,7 +403,7 @@ func (l *TransportLayer) ClientRequestConnection(ctx context.Context, req *Reque
 
 	// TODO refactor this
 	switch {
-	case viaHop.Host == "" || laddr.IP == nil: // If not specified by UAC we will override Via sent-by
+	case viaHop.Host == "" || !laddr.IP.IsValid(): // If not specified by UAC we will override Via sent-by
 		fallthrough
 	case viaHop.Port == 0: // We still may need to rewrite sent-by port
 		// TODO avoid this parsing
@@ -456,7 +457,7 @@ func (l *TransportLayer) resolveAddrIP(ctx context.Context, hostname string, add
 	l.log.Debug().Str("host", hostname).Msg("DNS Resolving")
 
 	// Do local resolving
-	ips, err := l.dnsResolver.LookupIPAddr(ctx, hostname)
+	ips, err := l.dnsResolver.LookupNetIP(ctx, "ip", hostname)
 	if err != nil {
 		return err
 	}
@@ -466,12 +467,12 @@ func (l *TransportLayer) resolveAddrIP(ctx context.Context, hostname string, add
 	}
 
 	for _, ip := range ips {
-		if len(ip.IP) == net.IPv4len {
-			addr.IP = ip.IP
+		if ip.Is4() {
+			addr.IP = ip
 			return nil
 		}
 	}
-	addr.IP = ips[0].IP
+	addr.IP = ips[0]
 	return nil
 }
 
@@ -499,7 +500,7 @@ func (l *TransportLayer) resolveAddrSRV(ctx context.Context, network string, hos
 	log.Debug().Interface("addrs", addrs).Msg("SRV resolved")
 	record := addrs[0]
 
-	ips, err := l.dnsResolver.LookupIP(ctx, "ip", record.Target)
+	ips, err := l.dnsResolver.LookupNetIP(ctx, "ip", record.Target)
 	if err != nil {
 		return err
 	}
@@ -508,7 +509,7 @@ func (l *TransportLayer) resolveAddrSRV(ctx context.Context, network string, hos
 	addr.IP = ips[0]
 	addr.Port = int(record.Port)
 
-	if addr.IP == nil {
+	if !addr.IP.IsValid() {
 		return fmt.Errorf("SRV resolving failed for %q", record.Target)
 	}
 
