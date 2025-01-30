@@ -221,6 +221,12 @@ func (tx *ClientTx) passUp() {
 	lastResp := tx.lastResp
 
 	if lastResp != nil {
+		// Prioritize done channel to avoid sending on a closed channel.
+		select {
+		case <-tx.done:
+			return
+		default:
+		}
 		select {
 		case <-tx.done:
 		case tx.responses <- lastResp:
