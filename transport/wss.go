@@ -42,7 +42,7 @@ func (t *WSSTransport) String() string {
 
 // CreateConnection creates WSS connection for TCP transport
 // TODO Make this consisten with TCP
-func (t *WSSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.MessageHandler) (Connection, error) {
+func (t *WSSTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
 	// raddr, err := net.ResolveTCPAddr("tcp", addr)
 	// if err != nil {
 	// 	return nil, err

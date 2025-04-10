@@ -371,7 +371,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 
 	l.log.Debug("Via header used for creating connection", "host", viaHop.Host, "port", viaHop.Port)
 
-	c, err = transport.CreateConnection(laddr, raddr, l.handleMessage)
+	c, err = transport.CreateConnection(laddr, host, raddr, l.handleMessage)
 	if err != nil {
 		return nil, err
 	}

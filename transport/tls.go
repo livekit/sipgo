@@ -39,7 +39,7 @@ func (t *TLSTransport) String() string {
 }
 
 // CreateConnection creates TLS connection for TCP transport
-func (t *TLSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.MessageHandler) (Connection, error) {
+func (t *TLSTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
 	// raddr, err := net.ResolveTCPAddr("tcp", addr)
 	// if err != nil {
 	// 	return nil, err
@@ -50,29 +50,31 @@ func (t *TLSTransport) CreateConnection(laddr Addr, raddr Addr, handler sip.Mess
 		Port: raddr.Port,
 	}
 
-	return t.createConnection(nil, traddr, handler)
+	return t.createConnection(nil, host, traddr, handler)
 }
 
-func (t *TLSTransport) createConnection(laddr *net.TCPAddr, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
+func (t *TLSTransport) createConnection(laddr *net.TCPAddr, host string, raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
-	t.log.Debug("Dialing new connection", "raddr", addr)
+	t.log.Debug("Dialing new connection", "raddr", addr, "host", host)
 
 	//TODO does this need to be each config
 	// SHould we make copy of rootPool?
 	// There is Clone of config
 
-	dialer := tls.Dialer{
-		NetDialer: &net.Dialer{
-			LocalAddr: laddr,
-		},
-		Config: t.tlsConf,
+	conf := t.tlsConf.Clone()
+	if conf == nil {
+		conf = &tls.Config{}
 	}
-
-	conn, err := dialer.DialContext(context.TODO(), "tcp", raddr.String())
+	conf.ServerName = host
+	dialer := &net.Dialer{
+		LocalAddr: laddr,
+	}
+	conn, err := dialer.DialContext(context.TODO(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s dial err=%w", t, err)
 	}
+	tconn := tls.Client(conn, conf)
 
-	c := t.initConnection(conn, addr, handler)
+	c := t.initConnection(tconn, addr, handler)
 	return c, nil
 }
