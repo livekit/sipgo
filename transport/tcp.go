@@ -274,6 +274,12 @@ func (c *TCPConnection) WriteMsg(msg sip.Message) error {
 
 	n, err := c.Write(data)
 	if err != nil {
+		// A write failure means this TCP connection is broken (e.g. a
+		// half-open socket whose peer silently went away). Close the underlying
+		// socket so the read loop unblocks and evicts it from the connection
+		// pool; otherwise it stays pooled and every subsequent request keeps
+		// reusing the dead socket.
+		c.Conn.Close()
 		return fmt.Errorf("conn %s write err=%w", c.RemoteAddr().String(), err)
 	}
 
