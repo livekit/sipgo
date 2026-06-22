@@ -183,5 +183,5 @@ func NewByeRequest(inviteRequest *Request, inviteResponse *Response, body []byte
 }
 
 func CopyRequest(req *Request) *Request {
-	return sipgo.CopyRequest(req)
+	return req.Clone()
 }
