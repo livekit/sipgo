@@ -240,16 +240,18 @@ func ClientRequestAddRecordRoute(c *Client, r *sip.Request) error {
 	// We will try to use our listen port. Host must be set to some none NAT IP
 	port := c.tp.GetListenPort(transport.NetworkToLower(r.Transport()))
 
+	// UriParams is ordered, so populate it via Add rather than a map literal.
+	uriParams := sip.NewParams()
+	// Transport must be provided as well
+	// https://datatracker.ietf.org/doc/html/rfc5658
+	uriParams.Add("transport", transport.NetworkToLower(r.Transport()))
+	uriParams.Add("lr", "")
+
 	rr := &sip.RecordRouteHeader{
 		Address: sip.Uri{
-			Host: c.host,
-			Port: port, // This must be listen port
-			UriParams: sip.HeaderParams{
-				// Transport must be provided as wesll
-				// https://datatracker.ietf.org/doc/html/rfc5658
-				"transport": transport.NetworkToLower(r.Transport()),
-				"lr":        "",
-			},
+			Host:      c.host,
+			Port:      port, // This must be listen port
+			UriParams: uriParams,
 		},
 	}
 

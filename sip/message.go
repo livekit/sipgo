@@ -9,7 +9,9 @@ type MessageHandler func(msg Message)
 type RequestMethod = sipgo.RequestMethod
 
 // StatusCode - response status code: 1xx - 6xx
-type StatusCode = sipgo.StatusCode
+// StatusCode aliases int to stay assignable to emiago/sipgo's int-typed
+// Response.StatusCode field while keeping the StatusXxx constants below.
+type StatusCode = int
 
 const (
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-21

@@ -60,11 +60,11 @@ func DefaultPort(transport string) int {
 }
 
 func MakeDialogIDFromRequest(msg *Request) (string, error) {
-	return sipgo.MakeDialogIDFromRequest(msg)
+	return sipgo.DialogIDFromRequestUAS(msg)
 }
 
 func MakeDialogIDFromResponse(msg *Response) (string, error) {
-	return sipgo.MakeDialogIDFromResponse(msg)
+	return sipgo.DialogIDFromResponse(msg)
 }
 
 // MakeDialogIDFromMessage creates dialog ID of message.
@@ -73,13 +73,13 @@ func MakeDialogIDFromResponse(msg *Response) (string, error) {
 func MakeDialogIDFromMessage(msg Message) (string, error) {
 	switch m := msg.(type) {
 	case *Request:
-		return sipgo.MakeDialogIDFromRequest(m)
+		return sipgo.DialogIDFromRequestUAS(m)
 	case *Response:
-		return sipgo.MakeDialogIDFromResponse(m)
+		return sipgo.DialogIDFromResponse(m)
 	}
 	return "", fmt.Errorf("unknown message format")
 }
 
 func MakeDialogID(callID, innerID, externalID string) string {
-	return sipgo.MakeDialogID(callID, innerID, externalID)
+	return sipgo.DialogIDMake(callID, innerID, externalID)
 }

@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"strings"
@@ -8,9 +9,11 @@ import (
 	sipgo "github.com/emiago/sipgo/sip"
 )
 
-// https://github.com/kpbird/golang_random_string
+// RandString returns a random alphanumeric string of length n. It builds on
+// RandStringBytesMask because emiago/sipgo does not export an equivalent.
 func RandString(n int) string {
-	return sipgo.RandString(n)
+	var sb strings.Builder
+	return RandStringBytesMask(&sb, n)
 }
 
 // https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
@@ -49,10 +52,34 @@ func UriIsSIPS(s string) bool {
 	return false
 }
 
-// Splits the given string into sections, separated by one or more characters
-// from c_ABNF_WS.
+// SplitByWhitespace splits text into sections separated by one or more ABNF
+// whitespace characters (space and tab).
 func SplitByWhitespace(text string) []string {
-	return sipgo.SplitByWhitespace(text)
+	const abnf = " \t"
+	var buffer bytes.Buffer
+	var inString = false
+	result := make([]string, 0)
+
+	for _, char := range text {
+		s := string(char)
+		if strings.Contains(abnf, s) {
+			if inString {
+				// First whitespace char following text; flush buffer to the results array.
+				result = append(result, buffer.String())
+				buffer.Reset()
+			}
+			inString = false
+		} else {
+			buffer.WriteString(s)
+			inString = true
+		}
+	}
+
+	if buffer.Len() > 0 {
+		result = append(result, buffer.String())
+	}
+
+	return result
 }
 
 // Forked from github.com/StefanKopieczek/gossip by @StefanKopieczek
