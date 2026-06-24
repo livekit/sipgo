@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.24.5
 
 require (
-	github.com/emiago/sipgo v1.2.1
+	github.com/emiago/sipgo v1.4.0
 	github.com/gobwas/ws v1.4.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.12.0
