@@ -1,9 +1,11 @@
 package sipgo
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 
 	"github.com/google/uuid"
 
@@ -79,6 +81,28 @@ func NewClient(ua *UserAgent, options ...ClientOption) (*Client, error) {
 	}
 
 	return c, nil
+}
+
+// ResolveTargets returns the addresses to try for a request URI, in order, each
+// carrying the port that belongs to it. port is the port from the URI, or 0 when
+// it carries none, in which case SRV supplies one.
+func (c *Client) ResolveTargets(ctx context.Context, network, host string, port int, sipScheme string) ([]netip.AddrPort, error) {
+	addrs, err := c.tp.ResolveTargets(ctx, network, host, port, sipScheme)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]netip.AddrPort, 0, len(addrs))
+	for _, a := range addrs {
+		ip, ok := netip.AddrFromSlice(a.IP)
+		if !ok {
+			continue
+		}
+		out = append(out, netip.AddrPortFrom(ip.Unmap(), uint16(a.Port)))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no usable addresses for %q", host)
+	}
+	return out, nil
 }
 
 // Close client handle. UserAgent must be closed for full transaction and transport layer closing.

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
 
@@ -16,6 +17,34 @@ import (
 
 var (
 	ErrNetworkNotSuported = errors.New("protocol not supported")
+)
+
+// srvLabels returns the SRV service and protocol labels for a transport.
+// RFC 3263 4.1 covers udp, tcp and tls; RFC 7118 6 covers ws and wss. The secure
+// transports are always sips, whatever the URI scheme says.
+func srvLabels(network, uriScheme string) (service, protocol string) {
+	switch network {
+	case "udp", "udp4", "udp6":
+		return uriScheme, "udp"
+	case "tls":
+		return "sips", "tcp"
+	case "ws":
+		return uriScheme, "ws"
+	case "wss":
+		return "sips", "wss"
+	default:
+		return uriScheme, "tcp"
+	}
+}
+
+// dnsIPPreference selects which family to take when a host resolves to both.
+type dnsIPPreference int
+
+const (
+	// dnsPreferAny takes whichever address the resolver returned first.
+	dnsPreferAny dnsIPPreference = iota
+	dnsPreferIPv4
+	dnsPreferIPv6
 )
 
 // Layer implementation.
@@ -35,6 +64,10 @@ type Layer struct {
 	dnsResolver   *net.Resolver
 
 	handlers []sip.MessageHandler
+
+	// dnsPreferSRV always does the SRV lookup first
+	dnsPreferSRV bool
+	dnsPreferIP  dnsIPPreference
 
 	// ConnectionReuse will force connection reuse when passing request
 	ConnectionReuse bool
@@ -56,6 +89,8 @@ func NewLayer(
 		transports:      make(map[string]Transport),
 		listenPorts:     make(map[string][]int),
 		dnsResolver:     dnsResolver,
+		dnsPreferSRV:    true,
+		dnsPreferIP:     dnsPreferIPv4,
 		ConnectionReuse: true,
 	}
 
@@ -289,9 +324,8 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		Port: port,
 	}
 	if raddr.IP == nil {
-		ctx := context.Background()
 		// TODO: how to cache this address, for example reusing in dialog routing
-		if err := l.resolveAddr(ctx, network, host, &raddr); err != nil {
+		if err := l.resolveRequestAddr(context.Background(), network, host, req, &raddr); err != nil {
 			return nil, err
 		}
 		// Save destination in request to avoid repeated resolving
@@ -393,30 +427,124 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 	return c, nil
 }
 
-func (l *Layer) resolveAddr(ctx context.Context, network string, host string, addr *Addr) error {
-	// We need to try local resolving.
-	ip, err := net.ResolveIPAddr("ip", host)
+// resolveRequestAddr resolves host into addr for req, choosing between SRV and
+// a plain host lookup the way RFC 3263 4.2 requires.
+//
+// This has no counterpart on emiago/sipgo upstream. Upstream resolves through
+// resolveRemoteAddr, which always calls resolveAddr and leaves the SRV-vs-A
+// choice to dnsPreferSRV, a layer-wide setting. Its own comment notes that
+// honoring the port is not implemented, which is what resolveRequestAddr does.
+//
+// resolveAddr, resolveAddrIP and resolveAddrSRV below started as upstream v1.4.0.
+// Changed since: SRV labels come from srvLabels rather than being derived inside
+// resolveAddrSRV, SRV misses logged at debug now that SRV runs first, bounds
+// checks around the DNS answers, and no Addr.Zone since nothing here reads it back.
+func (l *Layer) resolveRequestAddr(ctx context.Context, network string, host string, req *sip.Request, addr *Addr) error {
+	// In order: explicitly set destination first, then the Route header, then the
+	// request URI.
+	if req.MessageData.Destination() != "" {
+		// Whoever set it chose the port along with the host.
+		return l.resolveAddrIP(ctx, host, addr)
+	}
+	uri := &req.Recipient
+	if hdr := req.Route(); hdr != nil {
+		uri = &hdr.Address
+	}
+	// An explicit port means the port was chosen for us, so resolve the host
+	// only. Without one, SRV supplies both the host and the port that goes with
+	// it; pairing a host from one SRV record with a port from another sends the
+	// request to a port that host does not serve.
+	if uri.Port > 0 {
+		return l.resolveAddrIP(ctx, host, addr)
+	}
+	service, protocol := srvLabels(network, uri.Scheme)
+	return l.resolveAddr(ctx, service, protocol, host, addr)
+}
+
+// slowResolveThreshold is when a lookup is slow enough to be worth a log line.
+const slowResolveThreshold = 50 * time.Millisecond
+
+func (l *Layer) resolveAddr(ctx context.Context, service, protocol string, host string, addr *Addr) error {
+	defer func(start time.Time) {
+		if dur := time.Since(start); dur > slowResolveThreshold {
+			l.log.Warn("DNS resolution is slow", "host", host, "dur", dur)
+		}
+	}(time.Now())
+
+	if l.dnsPreferSRV {
+		err := l.resolveAddrSRV(ctx, service, protocol, host, addr)
+		if err == nil {
+			return nil
+		}
+		// Most hosts publish no SRV records, so this is expected, not a problem.
+		l.log.Debug("SRV lookup failed, using host lookup", "host", host, "error", err)
+		return l.resolveAddrIP(ctx, host, addr)
+	}
+
+	err := l.resolveAddrIP(ctx, host, addr)
 	if err == nil {
-		addr.IP = ip.IP
 		return nil
 	}
-	l.log.Debug("IP addr resolving failed, doing via dns resolver", "err", err)
 
-	var lookupnet string
-	switch network {
-	case "udp":
-		lookupnet = "udp"
-	default:
-		lookupnet = "tcp"
-	}
+	l.log.Debug("Host lookup failed, using SRV", "host", host, "error", err)
+	return l.resolveAddrSRV(ctx, service, protocol, host, addr)
+}
 
-	_, addrs, err := l.dnsResolver.LookupSRV(ctx, "sip", lookupnet, host)
+func (l *Layer) resolveAddrIP(ctx context.Context, hostname string, addr *Addr) error {
+	ips, err := l.dnsResolver.LookupIPAddr(ctx, hostname)
 	if err != nil {
-		return fmt.Errorf("fail to resolve target for %q: %w", host, err)
+		return err
 	}
-	a := addrs[0]
-	addr.IP = net.ParseIP(a.Target[:len(a.Target)-1])
-	addr.Port = int(a.Port)
+	if len(ips) == 0 {
+		return fmt.Errorf("no addresses for %q", hostname)
+	}
+
+	if l.dnsPreferIP != dnsPreferAny {
+		wantIPv4 := l.dnsPreferIP == dnsPreferIPv4
+		for _, ip := range ips {
+			// To4 returns nil for anything that is not IPv4.
+			if (ip.IP.To4() != nil) == wantIPv4 {
+				addr.IP = ip.IP
+				return nil
+			}
+		}
+		// Nothing in the preferred family, so fall through and take what we have.
+	}
+
+	addr.IP = ips[0].IP
+	return nil
+}
+
+func (l *Layer) resolveAddrSRV(ctx context.Context, service, protocol string, hostname string, addr *Addr) error {
+	// Records arrive sorted by priority and shuffled by weight within a priority,
+	// so the first one is the one to use.
+	_, records, err := l.dnsResolver.LookupSRV(ctx, service, protocol, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to look up SRV for %q: %w", hostname, err)
+	}
+	if len(records) == 0 {
+		return fmt.Errorf("no SRV records for %q", hostname)
+	}
+
+	record := records[0]
+	// A lone "." target means the service is deliberately not offered here.
+	if record.Target == "" || record.Target == "." {
+		return fmt.Errorf("no SIP service at %q", hostname)
+	}
+
+	// An SRV record names a host, not an address, so it still needs resolving.
+	ips, err := l.dnsResolver.LookupIP(ctx, "ip", record.Target)
+	if err != nil {
+		return err
+	}
+	if len(ips) == 0 || ips[0] == nil {
+		return fmt.Errorf("SRV target %q did not resolve", record.Target)
+	}
+
+	// Write both halves only once both are known. A half-written addr would leave
+	// this record's port paired with an address from the fallback lookup.
+	addr.IP = ips[0]
+	addr.Port = int(record.Port)
 	return nil
 }
 
