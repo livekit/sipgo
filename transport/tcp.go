@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -156,7 +157,8 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	defer t.pool.CloseAndDelete(conn, raddr)
 
 	// Create stream parser context
-	par := newStreamParser(t.parser.NewSIPStream())
+	par := t.parser.NewSIPStream()
+	defer par.Close()
 
 	for {
 		num, err := conn.Read(buf)
@@ -164,6 +166,12 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				t.log.Debug("connection was closed", "err", err)
 				connectionClosed.WithLabelValues("tcp", "peer_close").Inc()
+				return
+			}
+
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				t.log.Debug("connection received nothing before the read deadline", "err", err, "raddr", raddr)
+				connectionClosed.WithLabelValues("tcp", "read_timeout").Inc()
 				return
 			}
 
@@ -189,11 +197,18 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		// TODO fallback to parseFull if message size limit is set
 
 		// t.log.Debug().Str("raddr", raddr).Str("data", string(data)).Msg("new message")
-		if err := t.parseStream(par, data, raddr, handler); err != nil {
-			// Once the stream cannot be framed the connection is useless: the
-			// parser will never recognise another message on it, but reads keep
-			// succeeding so nothing else notices. Close it so the next call
-			// gets a fresh connection.
+		// A partial message is normal on a stream transport. Anything else means
+		// the parser cannot frame this stream any more, and there is no reliable
+		// way to find the next message boundary in a byte stream, so the only way
+		// back to a known one is a new connection. Reads keep succeeding either
+		// way, so nothing else would notice.
+		//
+		// The parser bounds an incomplete message itself and reports
+		// ErrMessageTooLarge, but only from the path that knows the message is
+		// incomplete. A CR with no LF takes a different path, consumes nothing and
+		// returns the same error on every later read, so it has to be caught here.
+		if err := t.parseStream(par, data, raddr, handler); err != nil &&
+			!errors.Is(err, sipgo.ErrParseSipPartial) {
 			reason := closeReason(err)
 			t.log.Info("closing connection, sip stream cannot be framed",
 				"err", err, "raddr", raddr, "reason", reason)
@@ -203,13 +218,25 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	}
 }
 
-func (t *TCPTransport) parseStream(par *streamParser, data []byte, src string, handler sip.MessageHandler) error {
+func (t *TCPTransport) parseStream(par *sipgo.ParserStream, data []byte, src string, handler sip.MessageHandler) error {
 	bytesPacketSize.WithLabelValues("tcp", "read").Observe(float64(len(data)))
-	return par.parse(data, func(msg sipgo.Message) {
+	return par.ParseSIPStream(data, func(msg sipgo.Message) {
 		msg.SetTransport(t.Network())
 		msg.SetSource(src)
 		handler(msg)
 	})
+}
+
+// closeReason maps a parse failure to a metric label.
+func closeReason(err error) string {
+	switch {
+	case errors.Is(err, sipgo.ErrMessageTooLarge):
+		return "message_too_large"
+	case errors.Is(err, sipgo.ErrParseLineNoCRLF):
+		return "no_crlf"
+	default:
+		return "parse_error"
+	}
 }
 
 // TODO use this when message size limit is defined
@@ -269,6 +296,12 @@ func (c *TCPConnection) TryClose() (int, error) {
 }
 
 func (c *TCPConnection) Read(b []byte) (n int, err error) {
+	if TCPReadTimeout > 0 {
+		if err := c.Conn.SetReadDeadline(time.Now().Add(TCPReadTimeout)); err != nil {
+			return 0, err
+		}
+	}
+
 	// Some debug hook. TODO move to proper way
 	n, err = c.Conn.Read(b)
 	if SIPDebug {

@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -248,4 +250,53 @@ func TestBindRange_Large(t *testing.T) {
 		{"large range 2", 1, 50000},
 		{"large range 3", 10000, 65535},
 	})
+}
+
+// A connection that receives nothing before the read deadline must fail its
+// read, so readConnection returns and the deferred pool cleanup runs. This
+// catches a peer that went away without a FIN or RST.
+func TestTCPConnectionReadTimeout(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 25 * time.Millisecond
+	defer func() { TCPReadTimeout = prev }()
+
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+
+	c := &TCPConnection{Conn: local}
+	if _, err := c.Read(make([]byte, 128)); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("expected a deadline error, got %v", err)
+	}
+}
+
+// With the deadline disabled a read must still block rather than fail.
+func TestTCPConnectionReadTimeoutDisabled(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 0
+	defer func() { TCPReadTimeout = prev }()
+
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+
+	c := &TCPConnection{Conn: local}
+	read := make(chan error, 1)
+	go func() {
+		_, err := c.Read(make([]byte, 128))
+		read <- err
+	}()
+
+	select {
+	case err := <-read:
+		t.Fatalf("read returned without any data: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if _, err := remote.Write([]byte("\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
