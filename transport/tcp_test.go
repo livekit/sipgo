@@ -3,11 +3,16 @@ package transport
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	sipgo "github.com/emiago/sipgo/sip"
 )
 
 func TestTCPBindRefused(t *testing.T) {
@@ -298,5 +303,66 @@ func TestTCPConnectionReadTimeoutDisabled(t *testing.T) {
 	}
 	if err := <-read; err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// A message that stops mid write and is never completed must not swallow the
+// next message on that connection. After a whole TCPReadTimeout with nothing
+// arriving, the fragment is dropped and the stream realigns, without closing a
+// connection the peer may never rebuild.
+func TestReadConnectionDropsAbandonedMessage(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 50 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	msgs := make(chan sipgo.Message, 4)
+	tr.initConnection(local, "10.2.2.2:5060", func(msg sipgo.Message) { msgs <- msg })
+
+	defer func() {
+		// Close the peer end so the read loop exits on its own, and wait for it
+		// to leave the pool before restoring the timeout it reads on every read.
+		remote.Close()
+		for i := 0; i < 200 && tr.pool.Size() > 0; i++ {
+			time.Sleep(5 * time.Millisecond)
+		}
+		tr.Close()
+		TCPReadTimeout = prev
+	}()
+
+	// A message that stops inside a header value, before its Content-Length.
+	truncated := "INVITE sip:bob@example.com SIP/2.0\r\n" +
+		"Via: SIP/2.0/TCP 10.0.0.1:5060;branch=z9hG4bK.trunc\r\n" +
+		"Call-ID: TRUNCATED\r\n" +
+		"CSeq: 1 INVITE\r\n" +
+		"Min-SE:"
+	if _, err := remote.Write([]byte(truncated)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing follows it for longer than the read deadline.
+	time.Sleep(4 * TCPReadTimeout)
+
+	if _, err := remote.Write([]byte(invite("SECOND", 40))); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case msg := <-msgs:
+		if got := msg.CallID().Value(); got != "SECOND" {
+			t.Fatalf("expected Call-ID SECOND, got %q", got)
+		}
+		via := msg.Via()
+		if via == nil {
+			t.Fatal("message has no Via")
+		}
+		// Without the reset the fragment merges in and this carries the
+		// truncated message's branch instead.
+		if strings.Contains(via.Value(), "z9hG4bK.trunc") {
+			t.Fatalf("message merged with the abandoned fragment: %q", via.Value())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no message delivered")
 	}
 }

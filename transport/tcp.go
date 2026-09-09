@@ -160,6 +160,11 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	par := t.parser.NewSIPStream()
 	defer par.Close()
 
+	// partial is true while a message is still being assembled. The parser
+	// cannot be asked: it drains complete header lines as it parses them, so
+	// its buffer stays near empty however far along the message is.
+	partial := false
+
 	for {
 		num, err := conn.Read(buf)
 		if err != nil {
@@ -170,9 +175,23 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 			}
 
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				t.log.Debug("connection received nothing before the read deadline", "err", err, "raddr", raddr)
-				connectionClosed.WithLabelValues("tcp", "read_timeout").Inc()
-				return
+				// Nothing arrived for a whole TCPReadTimeout. The connection is
+				// left open: some peers dial once, cache the connection and never
+				// rebuild it, so closing an idle one can cost us every later
+				// request from that peer.
+				//
+				// If a message was still incomplete, the rest of it is not
+				// coming. Drop it, otherwise the next bytes to arrive are
+				// appended to a fragment that can never complete and are lost
+				// with it.
+				if partial {
+					t.log.Info("discarding incomplete sip message, nothing followed it",
+						"raddr", raddr, "buffered", par.Buffer().Len())
+					par.Reset()
+					partial = false
+					parserReset.WithLabelValues("tcp", "stale_partial").Inc()
+				}
+				continue
 			}
 
 			t.log.Debug("Read error", "err", err)
@@ -207,8 +226,9 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		// ErrMessageTooLarge, but only from the path that knows the message is
 		// incomplete. A CR with no LF takes a different path, consumes nothing and
 		// returns the same error on every later read, so it has to be caught here.
-		if err := t.parseStream(par, data, raddr, handler); err != nil &&
-			!errors.Is(err, sipgo.ErrParseSipPartial) {
+		err = t.parseStream(par, data, raddr, handler)
+		partial = errors.Is(err, sipgo.ErrParseSipPartial)
+		if err != nil && !partial {
 			reason := closeReason(err)
 			t.log.Info("closing connection, sip stream cannot be framed",
 				"err", err, "raddr", raddr, "reason", reason)

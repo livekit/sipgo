@@ -24,6 +24,13 @@ var (
 		},
 	}, []string{"transport", "type"})
 
+	parserReset = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "sipgo",
+		Subsystem: "transport",
+		Name:      "parser_reset_total",
+		Help:      "Stream parsers reset without closing the connection, by reason",
+	}, []string{"transport", "reason"})
+
 	connectionClosed = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "sipgo",
 		Subsystem: "transport",
