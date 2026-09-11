@@ -7,42 +7,37 @@ import (
 
 // TODO Connection pool with keeping active connections longer
 
-// ConnectionPool holds the connections for one transport, keyed by remote
-// address. An address can map to several connections.
 type ConnectionPool struct {
 	// TODO consider sync.Map way with atomic checks to reduce mutex contention
 	sync.RWMutex
-	m map[string][]Connection
+	m map[string]Connection
 }
 
 func NewConnectionPool() *ConnectionPool {
 	return &ConnectionPool{
-		m: make(map[string][]Connection),
+		m: make(map[string]Connection),
 	}
 }
 
+// Add registers a connection for an address. One connection per address: the
+// last one added wins, so a duplicate silently orphans the previous one. See
+// the TODO in TCPTransport.createConnection for why duplicates can happen.
 func (p *ConnectionPool) Add(a string, c Connection) {
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
 	}
 	p.Lock()
-	p.m[a] = append(p.m[a], c)
+	p.m[a] = c
 	p.Unlock()
 }
 
-// Get returns the most recently added connection for an address, or nil if
-// there is none.
-//
-// Getting connection pool increases reference.
+// Getting connection pool increases reference
 // Make sure you TryClose after finish
 func (p *ConnectionPool) Get(a string) (c Connection) {
 	p.RLock()
-	conns := p.m[a]
-	if len(conns) > 0 {
-		c = conns[len(conns)-1]
-	}
+	c, exists := p.m[a]
 	p.RUnlock()
-	if c == nil {
+	if !exists {
 		return nil
 	}
 	c.Ref(1)
@@ -54,8 +49,7 @@ func (p *ConnectionPool) Get(a string) (c Connection) {
 	return c
 }
 
-// CloseAndDelete closes a connection and removes that connection from the
-// pool. Other connections to the same address are left alone.
+// CloseAndDelete closes connection and deletes from pool
 func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 	p.Lock()
 	defer p.Unlock()
@@ -65,51 +59,28 @@ func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
-	p.removeLocked(c, addr)
-}
-
-// removeLocked drops one connection from an address. Caller holds the lock.
-func (p *ConnectionPool) removeLocked(c Connection, addr string) {
-	conns := p.m[addr]
-	for i, existing := range conns {
-		if existing != c {
-			continue
-		}
-		conns = append(conns[:i], conns[i+1:]...)
-		if len(conns) == 0 {
-			delete(p.m, addr)
-		} else {
-			p.m[addr] = conns
-		}
-		return
-	}
+	delete(p.m, addr)
 }
 
 // Clear will clear all connection from pool and close them
 func (p *ConnectionPool) Clear() {
 	p.Lock()
 	defer p.Unlock()
-	for _, conns := range p.m {
-		for _, c := range conns {
-			if c.Ref(0) <= 0 {
-				continue
-			}
-			if err := c.Close(); err != nil {
-				slog.Warn("Closing conection return error", "err", err)
-			}
+	for _, c := range p.m {
+		if c.Ref(0) <= 0 {
+			continue
+		}
+		if err := c.Close(); err != nil {
+			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
 	// Remove all
-	p.m = make(map[string][]Connection)
+	p.m = make(map[string]Connection)
 }
 
-// Size returns the total number of pooled connections across all addresses.
 func (p *ConnectionPool) Size() int {
 	p.RLock()
-	l := 0
-	for _, conns := range p.m {
-		l += len(conns)
-	}
+	l := len(p.m)
 	p.RUnlock()
 	return l
 }

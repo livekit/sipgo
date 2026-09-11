@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTCPBindRefused(t *testing.T) {
@@ -365,4 +367,35 @@ func TestReadConnectionDropsAbandonedMessage(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no message delivered")
 	}
+}
+
+// One abandoned message is dropped and the connection kept, but a peer that
+// abandons a second one with nothing framed in between is not recovering, so
+// the connection goes.
+func TestReadConnectionClosesOnRepeatedAbandonedMessage(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 50 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	defer func() {
+		remote.Close()
+		tr.Close()
+		TCPReadTimeout = prev
+	}()
+
+	tr.initConnection(local, "10.2.2.2:5060", func(sipgo.Message) {})
+
+	head := "INVITE sip:bob@example.com SIP/2.0\r\nCall-ID: %s\r\nCSeq: 1 INVITE\r\nMin-SE:"
+	for i, id := range []string{"FIRST", "SECOND"} {
+		if _, err := remote.Write([]byte(fmt.Sprintf(head, id))); err != nil {
+			t.Fatalf("fragment %d: %v", i, err)
+		}
+		time.Sleep(4 * TCPReadTimeout)
+	}
+
+	// The read loop leaves the pool on its way out.
+	require.Eventually(t, func() bool { return tr.pool.Size() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"expected the connection to be closed")
 }

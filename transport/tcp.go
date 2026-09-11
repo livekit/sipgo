@@ -110,6 +110,15 @@ func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	return t.createConnection(traddr, handler)
 }
 
+// TODO add a per-address dial lock here, so only one connection per address can
+// exist. The layer checks the pool and dials without holding anything in
+// between (layer.go GetConnection then CreateConnection), so two concurrent
+// requests to an address with no connection both dial. The pool keeps only the
+// last one, which orphans the other: it stays open with its read loop running
+// but is never handed out again, and follow-up requests for a dialog started on
+// it go out on the surviving connection instead. The lock has to be
+// per-address, otherwise a slow handshake to one peer blocks dials to everyone
+// else, and it must re-check the pool after acquiring.
 func (t *TCPTransport) createConnection(raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
 	t.log.Debug("Dialing new connection", "raddr", addr)
@@ -154,7 +163,17 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler sip.MessageHandler) {
 	buf := make([]byte, transportBufferSize)
 
-	defer t.pool.CloseAndDelete(conn, raddr)
+	connectionOpened.WithLabelValues(t.Network()).Inc()
+	connectionsOpen.WithLabelValues(t.Network()).Inc()
+
+	// reason is set before every return, so the close counter and the gauge
+	// cannot drift apart from each other or from the pool.
+	reason := "unknown"
+	defer func() {
+		connectionsOpen.WithLabelValues(t.Network()).Dec()
+		connectionClosed.WithLabelValues(t.Network(), reason).Inc()
+		t.pool.CloseAndDelete(conn, raddr)
+	}()
 
 	// Create stream parser context
 	par := t.parser.NewSIPStream()
@@ -164,38 +183,52 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	// cannot be asked: it drains complete header lines as it parses them, so
 	// its buffer stays near empty however far along the message is.
 	partial := false
+	// staleResets counts read deadlines that found a message incomplete, with
+	// nothing framed in between.
+	staleResets := 0
 
 	for {
 		num, err := conn.Read(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				t.log.Debug("connection was closed", "err", err)
-				connectionClosed.WithLabelValues("tcp", "peer_close").Inc()
+				reason = "peer_close"
 				return
 			}
 
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				// Nothing arrived for a whole TCPReadTimeout. The connection is
-				// left open: some peers dial once, cache the connection and never
-				// rebuild it, so closing an idle one can cost us every later
+				// Nothing arrived for a whole TCPReadTimeout. An idle connection
+				// is left open: some peers dial once, cache the connection and
+				// never rebuild it, so closing one can cost us every later
 				// request from that peer.
-				//
-				// If a message was still incomplete, the rest of it is not
-				// coming. Drop it, otherwise the next bytes to arrive are
-				// appended to a fragment that can never complete and are lost
-				// with it.
-				if partial {
-					t.log.Info("discarding incomplete sip message, nothing followed it",
-						"raddr", raddr, "buffered", par.Buffer().Len())
-					par.Reset()
-					partial = false
-					parserReset.WithLabelValues("tcp", "stale_partial").Inc()
+				if !partial {
+					continue
 				}
+
+				// A message was left incomplete, so the rest of it is not
+				// coming. Twice with nothing framed in between means the peer
+				// keeps abandoning messages part way and the connection is not
+				// going to recover.
+				staleResets++
+				if staleResets > 1 {
+					t.log.Error("closing connection, peer abandoned a second incomplete sip message",
+						"raddr", raddr)
+					reason = "stale_partial_repeated"
+					return
+				}
+
+				// Drop it, otherwise the next bytes to arrive are appended to a
+				// fragment that can never complete and are lost with it.
+				t.log.Info("discarding incomplete sip message, nothing followed it",
+					"raddr", raddr)
+				par.Reset()
+				partial = false
+				parserReset.WithLabelValues("tcp", "stale_partial").Inc()
 				continue
 			}
 
 			t.log.Debug("Read error", "err", err)
-			connectionClosed.WithLabelValues("tcp", "read_error").Inc()
+			reason = "read_error"
 			return
 		}
 
@@ -215,7 +248,13 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 
 		// TODO fallback to parseFull if message size limit is set
 
-		// t.log.Debug().Str("raddr", raddr).Str("data", string(data)).Msg("new message")
+		framed, err := t.parseStream(par, data, raddr, handler)
+		if framed > 0 {
+			// The stream is framing messages again, so an earlier abandoned one
+			// was a one off rather than a pattern.
+			staleResets = 0
+		}
+
 		// A partial message is normal on a stream transport. Anything else means
 		// the parser cannot frame this stream any more, and there is no reliable
 		// way to find the next message boundary in a byte stream, so the only way
@@ -226,25 +265,42 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		// ErrMessageTooLarge, but only from the path that knows the message is
 		// incomplete. A CR with no LF takes a different path, consumes nothing and
 		// returns the same error on every later read, so it has to be caught here.
-		err = t.parseStream(par, data, raddr, handler)
 		partial = errors.Is(err, sipgo.ErrParseSipPartial)
 		if err != nil && !partial {
-			reason := closeReason(err)
-			t.log.Info("closing connection, sip stream cannot be framed",
-				"err", err, "raddr", raddr, "reason", reason)
-			connectionClosed.WithLabelValues("tcp", reason).Inc()
+			reason = closeReason(err)
+			stuck := par.Buffer().Bytes()
+			t.log.Error("closing connection, sip stream cannot be framed",
+				"err", err, "reason", reason, "raddr", raddr, "unparsed", len(stuck))
+			// The bytes say why, but they are peer traffic, so they stay out of
+			// the error above and are capped.
+			t.log.Debug("unparsed sip stream", "raddr", raddr, "data", dataSample(stuck))
 			return
 		}
 	}
 }
 
-func (t *TCPTransport) parseStream(par *sipgo.ParserStream, data []byte, src string, handler sip.MessageHandler) error {
+// parseStream feeds one read to the parser and reports how many messages it
+// framed, so the caller can tell a stream that is making progress from one that
+// is not.
+func (t *TCPTransport) parseStream(par *sipgo.ParserStream, data []byte, src string, handler sip.MessageHandler) (int, error) {
 	bytesPacketSize.WithLabelValues("tcp", "read").Observe(float64(len(data)))
-	return par.ParseSIPStream(data, func(msg sipgo.Message) {
+	framed := 0
+	err := par.ParseSIPStream(data, func(msg sipgo.Message) {
+		framed++
 		msg.SetTransport(t.Network())
 		msg.SetSource(src)
 		handler(msg)
 	})
+	return framed, err
+}
+
+// dataSample caps peer data so a log line cannot carry a whole read buffer.
+func dataSample(b []byte) string {
+	const max = 256
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "..."
 }
 
 // closeReason maps a parse failure to a metric label.
