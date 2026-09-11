@@ -3,6 +3,7 @@ package transport
 import (
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/livekit/sipgo/sip"
 )
@@ -15,6 +16,11 @@ var (
 	// 0 	- close connection immediatelly after transaction terminate
 	// 1 	- keep connection idle after transaction termination
 	IdleConnection int = 1
+
+	// TCPReadTimeout closes a TCP or TLS connection that receives nothing for
+	// this long. CRLF keep alives count as a read, so this mostly catches a
+	// peer that went away without a FIN or RST. 0 disables it.
+	TCPReadTimeout = 5 * time.Minute
 )
 
 const (

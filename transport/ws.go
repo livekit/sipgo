@@ -123,9 +123,16 @@ func (t *WSTransport) initConnection(conn net.Conn, addr string, clientSide bool
 // This should performe better to avoid any interface allocation
 func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler sip.MessageHandler) {
 	buf := make([]byte, transportBufferSize)
-	// defer conn.Close()
-	// defer t.pool.Del(raddr)
-	defer t.pool.CloseAndDelete(conn, raddr)
+
+	connectionOpened.WithLabelValues(t.Network()).Inc()
+	connectionsOpen.WithLabelValues(t.Network()).Inc()
+
+	reason := "unknown"
+	defer func() {
+		connectionsOpen.WithLabelValues(t.Network()).Dec()
+		connectionClosed.WithLabelValues(t.Network(), reason).Inc()
+		t.pool.CloseAndDelete(conn, raddr)
+	}()
 
 	// Create stream parser context
 	par := t.parser.NewSIPStream()
@@ -135,10 +142,12 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				t.log.Debug("Read connection closed", "err", err)
+				reason = "peer_close"
 				return
 			}
 
 			t.log.Error("Got TCP error", "err", err)
+			reason = "read_error"
 			return
 		}
 
