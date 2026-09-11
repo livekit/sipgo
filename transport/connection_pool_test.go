@@ -52,6 +52,3 @@ func BenchmarkConnectionPool(b *testing.B) {
 		}
 	}
 }
-
-// Several connections can share a remote address, and closing one must not
-// evict the others.
