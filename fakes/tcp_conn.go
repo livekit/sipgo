@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 )
 
 type TCPConn struct {
@@ -48,6 +49,20 @@ func (c *TCPConn) Write(p []byte) (n int, err error) {
 }
 
 func (c *TCPConn) Close() error {
+	return nil
+}
+
+// The embedded net.Conn is nil, so the deadline setters have to be implemented
+// here or any caller that sets one panics.
+func (c *TCPConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *TCPConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *TCPConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 

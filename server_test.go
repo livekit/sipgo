@@ -31,7 +31,7 @@ func testCreateMessage(t testing.TB, rawMsg []string) sip.Message {
 func createSimpleRequest(method sip.RequestMethod, sender sip.Uri, recipment sip.Uri, transport string) *sip.Request {
 	req := sip.NewRequest(method, recipment)
 	params := sip.NewParams()
-	params["branch"] = sip.GenerateBranch()
+	params.Add("branch", sip.GenerateBranch())
 	req.AppendHeader(&sip.ViaHeader{
 		ProtocolName:    "SIP",
 		ProtocolVersion: "2.0",
@@ -157,7 +157,7 @@ func TestUDPUAS(t *testing.T) {
 	// Register all handlers
 	var serverTxs []sip.ServerTransaction
 	for _, method := range allmethods {
-		srv.OnRequest(method, func(req *sip.Request, tx sip.ServerTransaction) {
+		srv.OnRequest(method, func(_ *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 			t.Log("New " + req.Method.String())
 			serverTxs = append(serverTxs, tx)
 			// Make all responses
@@ -193,9 +193,9 @@ func TestUDPUAS(t *testing.T) {
 	}
 
 	// Test SIP NON allowed
-	srv.noRouteHandler = func(req *sip.Request, tx sip.ServerTransaction) {
+	srv.noRouteHandler = func(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 		serverTxs = append(serverTxs, tx)
-		srv.defaultUnhandledHandler(req, tx)
+		srv.defaultUnhandledHandler(log, req, tx)
 	}
 
 	req := createSimpleRequest("NONALLOWED", sender, recipment, "UDP")
@@ -256,7 +256,7 @@ func TestTCPUAS(t *testing.T) {
 	// Register all handlers
 	var serverTxs []sip.ServerTransaction
 	for _, method := range allmethods {
-		srv.OnRequest(method, func(req *sip.Request, tx sip.ServerTransaction) {
+		srv.OnRequest(method, func(_ *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 			t.Log("New " + req.Method.String())
 			serverTxs = append(serverTxs, tx)
 			// Make all responses
@@ -291,9 +291,9 @@ func TestTCPUAS(t *testing.T) {
 	}
 
 	// Test SIP NON allowed
-	srv.noRouteHandler = func(req *sip.Request, tx sip.ServerTransaction) {
+	srv.noRouteHandler = func(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 		serverTxs = append(serverTxs, tx)
-		srv.defaultUnhandledHandler(req, tx)
+		srv.defaultUnhandledHandler(log, req, tx)
 	}
 
 	req := createSimpleRequest("NONALLOWED", sender, recipment, "TCP")
@@ -395,7 +395,7 @@ func ExampleServer_OnNoRoute() {
 	ua, _ := NewUA()
 	srv, _ := NewServer(ua)
 
-	srv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
+	srv.OnNoRoute(func(_ *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 		res := sip.NewResponseFromRequest(req, 405, "Method Not Allowed", nil)
 		// Send response directly and let transaction terminate
 		if err := srv.WriteResponse(res); err != nil {

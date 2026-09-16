@@ -19,10 +19,10 @@ func NewConnectionPool() *ConnectionPool {
 	}
 }
 
+// Add registers a connection for an address. One connection per address: the
+// last one added wins, so a duplicate silently orphans the previous one. See
+// the TODO in TCPTransport.createConnection for why duplicates can happen.
 func (p *ConnectionPool) Add(a string, c Connection) {
-	// TODO how about multi connection support for same remote address
-	// We can then check ref count
-
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
 	}

@@ -2,10 +2,19 @@ package transport
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net"
+	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	sipgo "github.com/emiago/sipgo/sip"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTCPBindRefused(t *testing.T) {
@@ -248,4 +257,145 @@ func TestBindRange_Large(t *testing.T) {
 		{"large range 2", 1, 50000},
 		{"large range 3", 10000, 65535},
 	})
+}
+
+// A connection that receives nothing before the read deadline must fail its
+// read, so readConnection returns and the deferred pool cleanup runs. This
+// catches a peer that went away without a FIN or RST.
+func TestTCPConnectionReadTimeout(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 25 * time.Millisecond
+	defer func() { TCPReadTimeout = prev }()
+
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+
+	c := &TCPConnection{Conn: local}
+	if _, err := c.Read(make([]byte, 128)); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("expected a deadline error, got %v", err)
+	}
+}
+
+// With the deadline disabled a read must still block rather than fail.
+func TestTCPConnectionReadTimeoutDisabled(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 0
+	defer func() { TCPReadTimeout = prev }()
+
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+
+	c := &TCPConnection{Conn: local}
+	read := make(chan error, 1)
+	go func() {
+		_, err := c.Read(make([]byte, 128))
+		read <- err
+	}()
+
+	select {
+	case err := <-read:
+		t.Fatalf("read returned without any data: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if _, err := remote.Write([]byte("\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// A message that stops mid write and is never completed must not swallow the
+// next message on that connection. After a whole TCPReadTimeout with nothing
+// arriving, the fragment is dropped and the stream realigns, without closing a
+// connection the peer may never rebuild.
+func TestReadConnectionDropsAbandonedMessage(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 50 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	msgs := make(chan sipgo.Message, 4)
+	tr.initConnection(local, "10.2.2.2:5060", func(msg sipgo.Message) { msgs <- msg })
+
+	defer func() {
+		// Close the peer end so the read loop exits on its own, and wait for it
+		// to leave the pool before restoring the timeout it reads on every read.
+		remote.Close()
+		for i := 0; i < 200 && tr.pool.Size() > 0; i++ {
+			time.Sleep(5 * time.Millisecond)
+		}
+		tr.Close()
+		TCPReadTimeout = prev
+	}()
+
+	// A message that stops inside a header value, before its Content-Length.
+	truncated := "INVITE sip:bob@example.com SIP/2.0\r\n" +
+		"Via: SIP/2.0/TCP 10.0.0.1:5060;branch=z9hG4bK.trunc\r\n" +
+		"Call-ID: TRUNCATED\r\n" +
+		"CSeq: 1 INVITE\r\n" +
+		"Min-SE:"
+	if _, err := remote.Write([]byte(truncated)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing follows it for longer than the read deadline.
+	time.Sleep(4 * TCPReadTimeout)
+
+	if _, err := remote.Write([]byte(invite("SECOND", 40))); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case msg := <-msgs:
+		if got := msg.CallID().Value(); got != "SECOND" {
+			t.Fatalf("expected Call-ID SECOND, got %q", got)
+		}
+		via := msg.Via()
+		if via == nil {
+			t.Fatal("message has no Via")
+		}
+		// Without the reset the fragment merges in and this carries the
+		// truncated message's branch instead.
+		if strings.Contains(via.Value(), "z9hG4bK.trunc") {
+			t.Fatalf("message merged with the abandoned fragment: %q", via.Value())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no message delivered")
+	}
+}
+
+// One abandoned message is dropped and the connection kept, but a peer that
+// abandons a second one with nothing framed in between is not recovering, so
+// the connection goes.
+func TestReadConnectionClosesOnRepeatedAbandonedMessage(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 50 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	defer func() {
+		remote.Close()
+		tr.Close()
+		TCPReadTimeout = prev
+	}()
+
+	tr.initConnection(local, "10.2.2.2:5060", func(sipgo.Message) {})
+
+	head := "INVITE sip:bob@example.com SIP/2.0\r\nCall-ID: %s\r\nCSeq: 1 INVITE\r\nMin-SE:"
+	for i, id := range []string{"FIRST", "SECOND"} {
+		if _, err := remote.Write([]byte(fmt.Sprintf(head, id))); err != nil {
+			t.Fatalf("fragment %d: %v", i, err)
+		}
+		time.Sleep(4 * TCPReadTimeout)
+	}
+
+	// The read loop leaves the pool on its way out.
+	require.Eventually(t, func() bool { return tr.pool.Size() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"expected the connection to be closed")
 }

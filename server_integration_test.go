@@ -101,7 +101,7 @@ func TestSimpleCall(t *testing.T) {
 		t.Fatal("Fail to setup dialog server")
 	}
 
-	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
+	srv.OnInvite(func(_ *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
 		t.Log("Invite received")
 		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 		if err := tx.Respond(res); err != nil {
