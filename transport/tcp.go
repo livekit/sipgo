@@ -186,6 +186,8 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	// staleResets counts read deadlines that found a message incomplete, with
 	// nothing framed in between.
 	staleResets := 0
+	// everFramed stays false until the peer sends one complete SIP message.
+	everFramed := false
 
 	for {
 		num, err := conn.Read(buf)
@@ -211,9 +213,13 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 				// going to recover.
 				staleResets++
 				if staleResets > 1 {
-					t.log.Error("closing connection, peer abandoned a second incomplete sip message",
-						"raddr", raddr)
-					reason = "stale_partial_repeated"
+					if everFramed {
+						t.log.Error("closing connection, peer abandoned a second incomplete sip message",
+							"raddr", raddr)
+						reason = "stale_partial_repeated"
+					} else {
+						reason = "stale_partial_repeated_but_never_framed"
+					}
 					return
 				}
 
@@ -253,6 +259,7 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 			// The stream is framing messages again, so an earlier abandoned one
 			// was a one off rather than a pattern.
 			staleResets = 0
+			everFramed = true
 		}
 
 		// A partial message is normal on a stream transport. Anything else means
@@ -267,13 +274,20 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 		// returns the same error on every later read, so it has to be caught here.
 		partial = errors.Is(err, sipgo.ErrParseSipPartial)
 		if err != nil && !partial {
-			reason = closeReason(err)
-			stuck := par.Buffer().Bytes()
-			t.log.Error("closing connection, sip stream cannot be framed",
-				"err", err, "reason", reason, "raddr", raddr, "unparsed", len(stuck))
-			// The bytes say why, but they are peer traffic, so they stay out of
-			// the error above and are capped.
-			t.log.Debug("unparsed sip stream", "raddr", raddr, "data", dataSample(stuck))
+			// A peer that framed a message and then stopped framing is a
+			// defect worth an error. A peer that never framed one is probably
+			// just a port scanner.
+			if everFramed {
+				reason = closeReason(err)
+				stuck := par.Buffer().Bytes()
+				t.log.Error("closing connection, sip stream cannot be framed",
+					"err", err, "reason", reason, "raddr", raddr, "unparsed", len(stuck))
+				// The bytes say why, but they are peer traffic, so they stay out
+				// of the error above and are capped.
+				t.log.Debug("unparsed sip stream", "raddr", raddr, "data", dataSample(stuck))
+			} else {
+				reason = "never_framed"
+			}
 			return
 		}
 	}
