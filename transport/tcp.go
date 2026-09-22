@@ -218,7 +218,7 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 							"raddr", raddr)
 						reason = "stale_partial_repeated"
 					} else {
-						reason = "never_framed"
+						reason = "stale_partial_repeated_but_never_framed"
 					}
 					return
 				}
