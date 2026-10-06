@@ -1,9 +1,11 @@
 package sipgo
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 
 	"github.com/google/uuid"
 
@@ -79,6 +81,13 @@ func NewClient(ua *UserAgent, options ...ClientOption) (*Client, error) {
 	}
 
 	return c, nil
+}
+
+// ResolveAddrPreferSRV resolves a request URI to one address, trying SRV before
+// a plain host lookup. port is the port from the URI, or 0 when it carries none.
+// A port given there suppresses SRV; see Layer.ResolveAddrPreferSRV.
+func (c *Client) ResolveAddrPreferSRV(ctx context.Context, network, host string, port int, sipScheme string) (netip.AddrPort, error) {
+	return c.tp.ResolveAddrPreferSRV(ctx, network, host, port, sipScheme)
 }
 
 // Close client handle. UserAgent must be closed for full transaction and transport layer closing.
