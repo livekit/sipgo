@@ -552,6 +552,7 @@ func (l *Layer) resolveAddrSRV(ctx context.Context, service, protocol string, ho
 	// An SRV record names a host, not an address, so it still needs resolving.
 	ips, err := l.dnsResolver.LookupIP(ctx, "ip", record.Target)
 	if err != nil {
+		// TODO: Loop over the rest of the SRV records if we get DNS failures
 		return err
 	}
 	if len(ips) == 0 || ips[0] == nil {
