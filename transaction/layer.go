@@ -73,7 +73,9 @@ func (txl *Layer) handleMessage(msg sip.Message) {
 func (txl *Layer) handleRequest(req *sip.Request) {
 	key, err := MakeServerTxKey(req)
 	if err != nil {
-		txl.log.Error("Server tx make key failed", "err", err)
+		// Any remote peer can send a request with missing or broken headers,
+		// internet scanners in particular, so this is not a server error.
+		txl.log.Warn("Server tx make key failed", "err", err)
 		return
 	}
 
