@@ -144,7 +144,14 @@ func (t *UDPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	t.log.Debug("New connection", "raddr", addr)
 
 	// Wrap it in reference
-	t.pool.Add(addr, c)
+	if old := t.pool.Add(addr, c); old != nil {
+		// Drop the IdleConnection reference so that the old connection is closed when its
+		// existing users are finished.
+		t.log.Debug("Displaced pooled connection", "raddr", addr)
+		if _, err := old.TryClose(); err != nil {
+			t.log.Debug("Closing displaced connection returned error", "raddr", addr, "err", err)
+		}
+	}
 	go t.readConnectedConnection(c, handler)
 	return c, err
 }

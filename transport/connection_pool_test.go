@@ -28,6 +28,69 @@ func TestConnectionPool(t *testing.T) {
 	}
 }
 
+func TestConnectionPoolAddDisplaces(t *testing.T) {
+	const addr = "127.0.0.2:5060"
+	newConn := func() *TCPConnection {
+		return &TCPConnection{Conn: &fakes.TCPConn{
+			LAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5060},
+			RAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.2"), Port: 5060},
+		}}
+	}
+	pool := NewConnectionPool()
+
+	// First insert displaces nothing.
+	c1 := newConn()
+	if old := pool.Add(addr, c1); old != nil {
+		t.Fatalf("first Add displaced; want nil %v", old)
+	}
+
+	// Re-adding the same connection is not a displacement.
+	if old := pool.Add(addr, c1); old != nil {
+		t.Fatalf("re-adding the same connection displaced; want nil %v", old)
+	}
+
+	// A concurrent dial lost the race while still carrying a request.
+	holder := pool.Get(addr) // c1 has two refs: idle ref + holder
+	c2 := newConn()
+	old := pool.Add(addr, c2)
+	if old != c1 {
+		t.Fatalf("Add displaced %v, want c1", old)
+	}
+	if got := pool.Get(addr); got != c2 {
+		t.Fatalf("new connection not mapped: %v", got)
+	}
+	c2.TryClose()
+
+	if ref, _ := old.TryClose(); ref != 1 {
+		t.Fatalf("displaced connection with a holder should stay open, ref %d", ref)
+	}
+	if ref, _ := holder.TryClose(); ref != 0 {
+		t.Fatalf("holder release should close the displaced connection, ref %d", ref)
+	}
+
+	// Its read loop cleaning up must not remove c2 from the pool.
+	pool.CloseAndDelete(c1, addr)
+	if got := pool.Get(addr); got != c2 {
+		t.Fatalf("cleanup of the displaced connection unmapped the winner: %v", got)
+	}
+	c2.TryClose()
+
+	// A stale entry with no users closes as soon as its idle ref is dropped.
+	c3 := newConn()
+	if old := pool.Add(addr, c3); old != c2 {
+		t.Fatalf("Add displaced %v, want c2", old)
+	}
+	if ref, _ := c2.TryClose(); ref != 0 {
+		t.Fatalf("stale displaced connection should close, ref %d", ref)
+	}
+
+	// The connection should remain in the pool even when its reference is cloed
+	// (perhaps we should fix this behavior, even though it won't come up).
+	if n := pool.Size(); n != 1 {
+		t.Fatalf("pool size %d, want 1", n)
+	}
+}
+
 func TestConnectionPoolRetire(t *testing.T) {
 	const addr = "127.0.0.2:5060"
 	newConn := func() *TCPConnection {

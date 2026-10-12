@@ -115,7 +115,9 @@ func (t *WSTransport) initConnection(conn net.Conn, addr string, clientSide bool
 		refcount:   1,
 		clientSide: clientSide,
 	}
-	t.pool.Add(addr, c)
+	// No need to close the old connection, as WS connections start with only a
+	// single reference.
+	_ = t.pool.Add(addr, c)
 	go t.readConnection(c, addr, handler)
 	return c
 }
