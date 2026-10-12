@@ -96,6 +96,10 @@ func (t *TCPTransport) GetConnection(addr string) (Connection, error) {
 	return c, nil
 }
 
+func (t *TCPTransport) RetireConnection(c Connection) bool {
+	return t.pool.Retire(c)
+}
+
 func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
 	// We are letting transport layer to resolve our address
 	// raddr, err := net.ResolveTCPAddr("tcp", addr)

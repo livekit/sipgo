@@ -49,6 +49,27 @@ func (p *ConnectionPool) Get(a string) (c Connection) {
 	return c
 }
 
+// Retire removes a connection from the pool. Does not close the connection.
+func (p *ConnectionPool) Retire(c Connection) bool {
+	p.Lock()
+	found := false
+	for addr, cur := range p.m {
+		if cur == c {
+			delete(p.m, addr)
+			found = true
+			break
+		}
+	}
+	p.Unlock()
+	if !found {
+		return false
+	}
+	if _, err := c.TryClose(); err != nil {
+		slog.Warn("Error closing retired connection", "err", err)
+	}
+	return true
+}
+
 // CloseAndDelete closes connection and deletes from pool
 func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 	p.Lock()

@@ -109,6 +109,11 @@ func (tx *ClientTx) Responses() <-chan *sip.Response {
 	return tx.responses
 }
 
+// Connection is the transport connection the request was sent on.
+func (tx *ClientTx) Connection() transport.Connection {
+	return tx.conn
+}
+
 // Cancel cancels client transaction by sending CANCEL request
 func (tx *ClientTx) Cancel() error {
 	tx.spinFsm(client_input_cancel)

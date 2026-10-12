@@ -84,6 +84,10 @@ func (t *UDPTransport) ResolveAddr(addr string) (net.Addr, error) {
 	return net.ResolveUDPAddr("udp", addr)
 }
 
+func (t *UDPTransport) RetireConnection(c Connection) bool {
+	return t.pool.Retire(c)
+}
+
 // GetConnection will return same listener connection
 func (t *UDPTransport) GetConnection(addr string) (Connection, error) {
 	// Single udp connection as listener can only be used as long IP of a packet in same network

@@ -219,6 +219,10 @@ func (t *WSTransport) GetConnection(addr string) (Connection, error) {
 	return c, nil
 }
 
+func (t *WSTransport) RetireConnection(c Connection) bool {
+	return t.pool.Retire(c)
+}
+
 func (t *WSTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
 	// raddr, err := net.ResolveTCPAddr("tcp", addr)
 	// if err != nil {

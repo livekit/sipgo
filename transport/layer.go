@@ -426,6 +426,16 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 	return c, nil
 }
 
+// RetireConnection unmaps c from all connection pools.
+func (l *Layer) RetireConnection(c Connection) bool {
+	for _, t := range l.transports {
+		if t.RetireConnection(c) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveAddr, resolveAddrIP and resolveAddrSRV came from emiago/sipgo v1.4.0.
 // Changed since: SRV labels come from srvLabels rather than being derived inside
 // resolveAddrSRV, which also fixes the upstream _sips._tls label, bounds checks

@@ -43,6 +43,9 @@ type Transport interface {
 	Network() string
 	GetConnection(addr string) (Connection, error)
 	CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error)
+	// RetireConnection removes a connection from the pool and returns whether
+	// or not the removal happened.
+	RetireConnection(c Connection) bool
 	String() string
 	Close() error
 }
