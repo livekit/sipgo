@@ -84,8 +84,8 @@ func (t *UDPTransport) ResolveAddr(addr string) (net.Addr, error) {
 	return net.ResolveUDPAddr("udp", addr)
 }
 
-func (t *UDPTransport) RetireConnection(c Connection) bool {
-	return t.pool.Retire(c)
+func (t *UDPTransport) RetireConnection(addr string, c Connection) bool {
+	return t.pool.Retire(addr, c)
 }
 
 // GetConnection will return same listener connection

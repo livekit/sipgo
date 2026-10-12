@@ -35,35 +35,25 @@ func (p *ConnectionPool) Add(a string, c Connection) {
 // Make sure you TryClose after finish
 func (p *ConnectionPool) Get(a string) (c Connection) {
 	p.RLock()
+	defer p.RUnlock()
 	c, exists := p.m[a]
-	p.RUnlock()
 	if !exists {
 		return nil
 	}
 	c.Ref(1)
-	// TODO handling more references
-	// if c.Ref(1) <= 1 {
-	// 	return nil
-	// }
-
 	return c
 }
 
 // Retire removes a connection from the pool. Does not close the connection.
-func (p *ConnectionPool) Retire(c Connection) bool {
+func (p *ConnectionPool) Retire(addr string, c Connection) bool {
 	p.Lock()
-	found := false
-	for addr, cur := range p.m {
-		if cur == c {
-			delete(p.m, addr)
-			found = true
-			break
-		}
-	}
-	p.Unlock()
-	if !found {
+	cur, ok := p.m[addr]
+	if !ok || cur != c {
+		p.Unlock()
 		return false
 	}
+	delete(p.m, addr)
+	p.Unlock()
 	if _, err := c.TryClose(); err != nil {
 		slog.Warn("Error closing retired connection", "err", err)
 	}
@@ -74,13 +64,18 @@ func (p *ConnectionPool) Retire(c Connection) bool {
 func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 	p.Lock()
 	defer p.Unlock()
-	ref, _ := c.TryClose() // Be nice. Saves from double closing
-	if ref > 0 {
+	if c.Ref(0) > 0 {
+		// Still referenced, so hard close. A connection that TryClose or
+		// Retire already brought to zero is closed and must not be closed twice.
 		if err := c.Close(); err != nil {
 			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
-	delete(p.m, addr)
+	// Only unmap if the entry is still ours (to avoid closing a newly
+	// established connection on the same address).
+	if cur, ok := p.m[addr]; ok && cur == c {
+		delete(p.m, addr)
+	}
 }
 
 // Clear will clear all connection from pool and close them

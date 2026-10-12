@@ -96,8 +96,8 @@ func (t *TCPTransport) GetConnection(addr string) (Connection, error) {
 	return c, nil
 }
 
-func (t *TCPTransport) RetireConnection(c Connection) bool {
-	return t.pool.Retire(c)
+func (t *TCPTransport) RetireConnection(addr string, c Connection) bool {
+	return t.pool.Retire(addr, c)
 }
 
 func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {

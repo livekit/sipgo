@@ -90,10 +90,13 @@ func (c *Client) ResolveAddrPreferSRV(ctx context.Context, network, host string,
 	return c.tp.ResolveAddrPreferSRV(ctx, network, host, port, sipScheme)
 }
 
-// RetireConnection takes tx's connectionout of the transport pool so that
+// RetireConnection takes tx's connection out of the transport pool so that
 // subsequent requests use a new one.
 func (c *Client) RetireConnection(tx sip.ClientTransaction) {
-	ct, ok := tx.(interface{ Connection() transport.Connection })
+	ct, ok := tx.(interface {
+		Origin() *sip.Request
+		Connection() transport.Connection
+	})
 	if !ok {
 		return
 	}
@@ -101,7 +104,7 @@ func (c *Client) RetireConnection(tx sip.ClientTransaction) {
 	if conn == nil {
 		return
 	}
-	c.tp.RetireConnection(conn)
+	c.tp.RetireConnection(ct.Origin(), conn)
 }
 
 // Close client handle. UserAgent must be closed for full transaction and transport layer closing.
