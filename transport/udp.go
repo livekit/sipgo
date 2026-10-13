@@ -84,6 +84,10 @@ func (t *UDPTransport) ResolveAddr(addr string) (net.Addr, error) {
 	return net.ResolveUDPAddr("udp", addr)
 }
 
+func (t *UDPTransport) RetireConnection(addr string, c Connection) bool {
+	return t.pool.Retire(addr, c)
+}
+
 // GetConnection will return same listener connection
 func (t *UDPTransport) GetConnection(addr string) (Connection, error) {
 	// Single udp connection as listener can only be used as long IP of a packet in same network
@@ -140,7 +144,14 @@ func (t *UDPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	t.log.Debug("New connection", "raddr", addr)
 
 	// Wrap it in reference
-	t.pool.Add(addr, c)
+	if old := t.pool.Add(addr, c); old != nil {
+		// Drop the IdleConnection reference so that the old connection is closed when its
+		// existing users are finished.
+		t.log.Debug("Displaced pooled connection", "raddr", addr)
+		if _, err := old.TryClose(); err != nil {
+			t.log.Debug("Closing displaced connection returned error", "raddr", addr, "err", err)
+		}
+	}
 	go t.readConnectedConnection(c, handler)
 	return c, err
 }

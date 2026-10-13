@@ -96,6 +96,10 @@ func (t *TCPTransport) GetConnection(addr string) (Connection, error) {
 	return c, nil
 }
 
+func (t *TCPTransport) RetireConnection(addr string, c Connection) bool {
+	return t.pool.Retire(addr, c)
+}
+
 func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
 	// We are letting transport layer to resolve our address
 	// raddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -110,15 +114,7 @@ func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	return t.createConnection(traddr, handler)
 }
 
-// TODO add a per-address dial lock here, so only one connection per address can
-// exist. The layer checks the pool and dials without holding anything in
-// between (layer.go GetConnection then CreateConnection), so two concurrent
-// requests to an address with no connection both dial. The pool keeps only the
-// last one, which orphans the other: it stays open with its read loop running
-// but is never handed out again, and follow-up requests for a dialog started on
-// it go out on the surviving connection instead. The lock has to be
-// per-address, otherwise a slow handshake to one peer blocks dials to everyone
-// else, and it must re-check the pool after acquiring.
+// Create a new connection to the given remote address.
 func (t *TCPTransport) createConnection(raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
 	t.log.Debug("Dialing new connection", "raddr", addr)
@@ -154,7 +150,14 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 		Conn:     conn,
 		refcount: 1 + IdleConnection,
 	}
-	t.pool.Add(addr, c)
+	if old := t.pool.Add(addr, c); old != nil {
+		// Drop the IdleConnection reference so that the old connection is closed when its
+		// existing users are finished.
+		t.log.Debug("Displaced pooled connection", "raddr", addr, "local", old.LocalAddr())
+		if _, err := old.TryClose(); err != nil {
+			t.log.Debug("Closing displaced connection returned error", "raddr", addr, "err", err)
+		}
+	}
 	go t.readConnection(c, addr, handler)
 	return c
 }

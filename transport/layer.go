@@ -309,18 +309,13 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 	}
 
 	// Resolve our remote address
-	a := req.Destination()
-	host, port, err := sip.ParseAddr(a)
+	host, raddr, err := destAddr(req)
 	if err != nil {
-		return nil, fmt.Errorf("build address target for %s: %w", a, err)
+		return nil, fmt.Errorf("build address target for %s: %w", req.Destination(), err)
 	}
 
 	// dns srv lookup
 
-	raddr := Addr{
-		IP:   net.ParseIP(host),
-		Port: port,
-	}
 	if raddr.IP == nil {
 		// TODO: how to cache this address, for example reusing in dialog routing
 		service, protocol := srvLabels(network, req.Recipient.Scheme)
@@ -413,7 +408,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		l := c.LocalAddr()
 		laddrStr := l.String()
 
-		host, port, err = sip.ParseAddr(laddrStr)
+		host, port, err := sip.ParseAddr(laddrStr)
 		if err != nil {
 			return nil, fmt.Errorf("fail to parse local connection address network=%s addr=%s: %w", network, laddrStr, err)
 		}
@@ -424,6 +419,28 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		viaHop.Port = port
 	}
 	return c, nil
+}
+
+func destAddr(req *sip.Request) (host string, raddr Addr, err error) {
+	host, port, err := sip.ParseAddr(req.Destination())
+	if err != nil {
+		return "", Addr{}, err
+	}
+	return host, Addr{IP: net.ParseIP(host), Port: port}, nil
+}
+
+// RetireConnection removes the connection from its pool. This does not close
+// the connection.
+func (l *Layer) RetireConnection(req *sip.Request, c Connection) bool {
+	t, ok := l.transports[NetworkToLower(req.Transport())]
+	if !ok {
+		return false
+	}
+	_, raddr, err := destAddr(req)
+	if err != nil || raddr.IP == nil {
+		return false
+	}
+	return t.RetireConnection(raddr.String(), c)
 }
 
 // resolveAddr, resolveAddrIP and resolveAddrSRV came from emiago/sipgo v1.4.0.

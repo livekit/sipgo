@@ -19,47 +19,68 @@ func NewConnectionPool() *ConnectionPool {
 	}
 }
 
-// Add registers a connection for an address. One connection per address: the
-// last one added wins, so a duplicate silently orphans the previous one. See
-// the TODO in TCPTransport.createConnection for why duplicates can happen.
-func (p *ConnectionPool) Add(a string, c Connection) {
+// Add registers a connection for an address and returns the connection it
+// displaced, or nil. It is reponsibility of the caller to close the displaced
+// connection.
+func (p *ConnectionPool) Add(a string, c Connection) (displaced Connection) {
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
 	}
 	p.Lock()
+	displaced = p.m[a]
 	p.m[a] = c
 	p.Unlock()
+	if displaced == c {
+		return nil
+	}
+	return displaced
 }
 
 // Getting connection pool increases reference
 // Make sure you TryClose after finish
 func (p *ConnectionPool) Get(a string) (c Connection) {
 	p.RLock()
+	defer p.RUnlock()
 	c, exists := p.m[a]
-	p.RUnlock()
 	if !exists {
 		return nil
 	}
 	c.Ref(1)
-	// TODO handling more references
-	// if c.Ref(1) <= 1 {
-	// 	return nil
-	// }
-
 	return c
+}
+
+// Retire removes a connection from the pool. Does not close the connection.
+func (p *ConnectionPool) Retire(addr string, c Connection) bool {
+	p.Lock()
+	cur, ok := p.m[addr]
+	if !ok || cur != c {
+		p.Unlock()
+		return false
+	}
+	delete(p.m, addr)
+	p.Unlock()
+	if _, err := c.TryClose(); err != nil {
+		slog.Warn("Error closing retired connection", "err", err)
+	}
+	return true
 }
 
 // CloseAndDelete closes connection and deletes from pool
 func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
 	p.Lock()
 	defer p.Unlock()
-	ref, _ := c.TryClose() // Be nice. Saves from double closing
-	if ref > 0 {
+	if c.Ref(0) > 0 {
+		// Still referenced, so hard close. A connection that TryClose or
+		// Retire already brought to zero is closed and must not be closed twice.
 		if err := c.Close(); err != nil {
 			slog.Warn("Closing conection return error", "err", err)
 		}
 	}
-	delete(p.m, addr)
+	// Only unmap if the entry is still ours (to avoid closing a newly
+	// established connection on the same address).
+	if cur, ok := p.m[addr]; ok && cur == c {
+		delete(p.m, addr)
+	}
 }
 
 // Clear will clear all connection from pool and close them

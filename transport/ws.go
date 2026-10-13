@@ -115,7 +115,9 @@ func (t *WSTransport) initConnection(conn net.Conn, addr string, clientSide bool
 		refcount:   1,
 		clientSide: clientSide,
 	}
-	t.pool.Add(addr, c)
+	// No need to close the old connection, as WS connections start with only a
+	// single reference.
+	_ = t.pool.Add(addr, c)
 	go t.readConnection(c, addr, handler)
 	return c
 }
@@ -217,6 +219,10 @@ func (t *WSTransport) GetConnection(addr string) (Connection, error) {
 
 	c := t.pool.Get(addr)
 	return c, nil
+}
+
+func (t *WSTransport) RetireConnection(addr string, c Connection) bool {
+	return t.pool.Retire(addr, c)
 }
 
 func (t *WSTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
