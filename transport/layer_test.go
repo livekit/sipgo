@@ -14,14 +14,14 @@ import (
 	sipgo "github.com/emiago/sipgo/sip"
 )
 
-// fakeDNS is a minimal UDP DNS server answering A and SRV queries from a table.
+// fakeDNS is a minimal UDP DNS server answering A, AAAA and SRV queries from a table.
 // It exists so the resolver can be driven through a real *net.Resolver, which is
 // the only type Layer accepts.
 type fakeDNS struct {
 	t    *testing.T
 	conn *net.UDPConn
 
-	a   map[string][]string  // hostname -> IPv4 addresses
+	a   map[string][]string  // hostname -> addresses, served as A or AAAA by family
 	srv map[string][]fakeSRV // owner name -> records
 
 	mu   sync.Mutex
@@ -36,8 +36,9 @@ type fakeSRV struct {
 }
 
 const (
-	typeA   = 1
-	typeSRV = 33
+	typeA    = 1
+	typeAAAA = 28
+	typeSRV  = 33
 )
 
 func newFakeDNS(t *testing.T, a map[string][]string, srv map[string][]fakeSRV) *fakeDNS {
@@ -114,9 +115,24 @@ func (d *fakeDNS) respond(q []byte) []byte {
 	switch qtype {
 	case typeA:
 		for _, ip := range d.a[strings.TrimSuffix(name, ".")] {
+			v4 := net.ParseIP(ip).To4()
+			if v4 == nil {
+				continue
+			}
 			answers = append(answers, encodeName(name)...)
 			answers = append(answers, rrHeader(typeA, 4)...)
-			answers = append(answers, net.ParseIP(ip).To4()...)
+			answers = append(answers, v4...)
+			count++
+		}
+	case typeAAAA:
+		for _, ip := range d.a[strings.TrimSuffix(name, ".")] {
+			parsed := net.ParseIP(ip)
+			if parsed.To4() != nil {
+				continue
+			}
+			answers = append(answers, encodeName(name)...)
+			answers = append(answers, rrHeader(typeAAAA, 16)...)
+			answers = append(answers, parsed.To16()...)
 			count++
 		}
 	case typeSRV:
@@ -421,6 +437,113 @@ func TestResolveAddrHostFirstFallsBackToSRV(t *testing.T) {
 	}
 	if want := "192.0.2.90:5062"; addr.String() != want {
 		t.Fatalf("got %s, want %s", addr.String(), want)
+	}
+}
+
+// The address picked for an SRV target follows the same family preference as a
+// plain host lookup. Each preference is tested because the resolver's ordering
+// of A and AAAA answers depends on the machine running the test.
+func TestResolveAddrSRVTargetUsesIPPreference(t *testing.T) {
+	const host = "dualstack.example.com"
+	d := newFakeDNS(t,
+		map[string][]string{"edge.example.com": {"2001:db8::91", "192.0.2.91"}},
+		map[string][]fakeSRV{
+			"_sip._udp." + host: {{target: "edge.example.com", port: 5062}},
+		})
+
+	for _, tc := range []struct {
+		prefer dnsIPPreference
+		want   string
+	}{
+		{dnsPreferIPv4, "192.0.2.91:5062"},
+		{dnsPreferIPv6, "[2001:db8::91]:5062"},
+	} {
+		l := newTestLayer(t, d)
+		l.dnsPreferIP = tc.prefer
+
+		var addr Addr
+		err := resolveWithin(t, func(ctx context.Context) error {
+			return l.resolveAddrSRV(ctx, "sip", "udp", host, &addr)
+		})
+		if err != nil {
+			t.Fatalf("resolveAddrSRV: %v", err)
+		}
+		if addr.String() != tc.want {
+			t.Fatalf("prefer %d: got %s, want %s", tc.prefer, addr.String(), tc.want)
+		}
+	}
+}
+
+func newTestRequest(host string, port int) *sipgo.Request {
+	req := sipgo.NewRequest(sipgo.INVITE, sipgo.Uri{Scheme: "sip", User: "alice", Host: host, Port: port})
+	req.AppendHeader(&sipgo.ViaHeader{
+		ProtocolName:    "SIP",
+		ProtocolVersion: "2.0",
+		Transport:       "UDP",
+		Params:          sipgo.NewParams(),
+	})
+	return req
+}
+
+// A port in the request URI is kept. When the host has no address records, the
+// request fails rather than going to whatever port an SRV record names.
+func TestClientRequestConnectionExplicitPortSkipsSRV(t *testing.T) {
+	const host = "srvonly.example.com"
+	d := newFakeDNS(t,
+		map[string][]string{"edge.example.com": {"192.0.2.92"}},
+		map[string][]fakeSRV{
+			"_sip._udp." + host: {{target: "edge.example.com", port: 5062}},
+		})
+	l := newTestLayer(t, d)
+
+	req := newTestRequest(host, 5090)
+	if _, err := l.ClientRequestConnection(req); err == nil {
+		t.Fatalf("expected an error, request went to %s", req.Destination())
+	}
+	if n := d.queries("_sip._udp."+host, typeSRV); n != 0 {
+		t.Fatalf("SRV was queried %d times for a URI with a port", n)
+	}
+}
+
+// Without a port in the URI, an SRV-only host still resolves through SRV.
+func TestClientRequestConnectionNoPortFallsBackToSRV(t *testing.T) {
+	const host = "srvonly.example.com"
+	d := newFakeDNS(t,
+		map[string][]string{"edge.example.com": {"192.0.2.93"}},
+		map[string][]fakeSRV{
+			"_sip._udp." + host: {{target: "edge.example.com", port: 5062}},
+		})
+	l := newTestLayer(t, d)
+
+	req := newTestRequest(host, 0)
+	if _, err := l.ClientRequestConnection(req); err != nil {
+		t.Fatalf("ClientRequestConnection: %v", err)
+	}
+	if want := "192.0.2.93:5062"; req.Destination() != want {
+		t.Fatalf("got %s, want %s", req.Destination(), want)
+	}
+}
+
+func TestDestinationHasPort(t *testing.T) {
+	req := newTestRequest("example.com", 0)
+	if destinationHasPort(req) {
+		t.Fatal("URI without a port reported one")
+	}
+
+	req = newTestRequest("example.com", 5090)
+	if !destinationHasPort(req) {
+		t.Fatal("URI with a port reported none")
+	}
+
+	// A Route header overrides the request URI.
+	req.AppendHeader(&sipgo.RouteHeader{Address: sipgo.Uri{Host: "proxy.example.com"}})
+	if destinationHasPort(req) {
+		t.Fatal("Route without a port reported one")
+	}
+
+	req.SetDestination("proxy.example.com:5070")
+	if !destinationHasPort(req) {
+		t.Fatal("explicit destination reported no port")
 	}
 }
 
