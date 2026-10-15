@@ -545,6 +545,11 @@ func TestDestinationHasPort(t *testing.T) {
 	if !destinationHasPort(req) {
 		t.Fatal("explicit destination reported no port")
 	}
+
+	req.SetDestination("proxy.example.com:0")
+	if destinationHasPort(req) {
+		t.Fatal("explicit destination with port 0 reported a port")
+	}
 }
 
 // An SRV target that does not resolve is an error, not a nil IP passed onward.

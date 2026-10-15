@@ -437,8 +437,9 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 // rather than the transport default that Destination fills in. It must pick the
 // same URI as Request.Destination in emiago/sipgo.
 func destinationHasPort(req *sip.Request) bool {
-	if req.MessageData.Destination() != "" {
-		return true
+	if dest := req.MessageData.Destination(); dest != "" {
+		_, port, err := sip.ParseAddr(dest)
+		return err == nil && port > 0
 	}
 	if hdr := req.Route(); hdr != nil {
 		return hdr.Address.Port > 0
