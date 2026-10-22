@@ -50,20 +50,20 @@ func (p *ConnectionPool) Get(a string) (c Connection) {
 }
 
 // CloseAndDelete closes connection and deletes from pool
-func (p *ConnectionPool) CloseAndDelete(c Connection, addr string) {
+func (p *ConnectionPool) CloseAndDelete(log *slog.Logger, c Connection, addr string) {
 	p.Lock()
 	defer p.Unlock()
 	ref, _ := c.TryClose() // Be nice. Saves from double closing
 	if ref > 0 {
 		if err := c.Close(); err != nil {
-			slog.Warn("Closing conection return error", "err", err)
+			log.Info("Closing connection returned error", "err", err)
 		}
 	}
 	delete(p.m, addr)
 }
 
 // Clear will clear all connection from pool and close them
-func (p *ConnectionPool) Clear() {
+func (p *ConnectionPool) Clear(log *slog.Logger) {
 	p.Lock()
 	defer p.Unlock()
 	for _, c := range p.m {
@@ -71,7 +71,7 @@ func (p *ConnectionPool) Clear() {
 			continue
 		}
 		if err := c.Close(); err != nil {
-			slog.Warn("Closing conection return error", "err", err)
+			log.Info("Closing connection returned error", "err", err)
 		}
 	}
 	// Remove all
