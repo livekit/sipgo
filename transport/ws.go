@@ -57,7 +57,7 @@ func (t *WSTransport) Network() string {
 }
 
 func (t *WSTransport) Close() error {
-	t.pool.Clear()
+	t.pool.Clear(t.log)
 	return nil
 }
 
@@ -131,7 +131,7 @@ func (t *WSTransport) readConnection(conn *WSConnection, raddr string, handler s
 	defer func() {
 		connectionsOpen.WithLabelValues(t.Network()).Dec()
 		connectionClosed.WithLabelValues(t.Network(), reason).Inc()
-		t.pool.CloseAndDelete(conn, raddr)
+		t.pool.CloseAndDelete(t.log, conn, raddr)
 	}()
 
 	// Create stream parser context

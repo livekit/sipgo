@@ -54,7 +54,7 @@ func (t *UDPTransport) Network() string {
 }
 
 func (t *UDPTransport) Close() error {
-	t.pool.Clear()
+	t.pool.Clear(t.log)
 	return nil
 }
 
@@ -171,7 +171,7 @@ func (t *UDPTransport) readConnection(conn *UDPConnection, handler sip.MessageHa
 func (t *UDPTransport) readConnectedConnection(conn *UDPConnection, handler sip.MessageHandler) {
 	buf := make([]byte, transportBufferSize)
 	raddr := conn.raddr.String()
-	defer t.pool.CloseAndDelete(conn, raddr)
+	defer t.pool.CloseAndDelete(t.log, conn, raddr)
 
 	for {
 		num, err := conn.Read(buf)
