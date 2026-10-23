@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -199,6 +200,14 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 			}
 
 			if errors.Is(err, os.ErrDeadlineExceeded) {
+				// A failed handshake makes every later Read return the same
+				// error at once, so carrying on would spin.
+				if tc, ok := conn.Conn.(*tls.Conn); ok && !tc.ConnectionState().HandshakeComplete {
+					t.log.Info("closing connection, tls handshake did not complete", "raddr", raddr)
+					reason = "tls_handshake_did_not_complete"
+					return
+				}
+
 				// Nothing arrived for a whole TCPReadTimeout. An idle connection
 				// is left open: some peers dial once, cache the connection and
 				// never rebuild it, so closing one can cost us every later
