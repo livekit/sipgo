@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -398,4 +400,31 @@ func TestReadConnectionClosesOnRepeatedAbandonedMessage(t *testing.T) {
 	// The read loop leaves the pool on its way out.
 	require.Eventually(t, func() bool { return tr.pool.Size() == 0 }, 2*time.Second, 5*time.Millisecond,
 		"expected the connection to be closed")
+}
+
+// A TLS handshake that times out is saved by crypto/tls and returned by every
+// later Read without waiting, so the read loop must close the connection
+// rather than keep it as idle.
+func TestReadConnectionClosesOnFailedTLSHandshake(t *testing.T) {
+	prev := TCPReadTimeout
+	TCPReadTimeout = 50 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	defer func() {
+		remote.Close()
+		tr.Close()
+		TCPReadTimeout = prev
+	}()
+
+	closed := connectionClosed.WithLabelValues(tr.Network(), "tls_handshake_did_not_complete")
+	before := testutil.ToFloat64(closed)
+
+	// The peer never sends a ClientHello.
+	tr.initConnection(tls.Server(local, &tls.Config{}), "10.2.2.2:5061", func(sipgo.Message) {})
+
+	require.Eventually(t, func() bool { return tr.pool.Size() == 0 }, 2*time.Second, 5*time.Millisecond,
+		"expected the connection to be closed")
+	require.Equal(t, before+1, testutil.ToFloat64(closed))
 }
