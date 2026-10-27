@@ -260,13 +260,12 @@ func (l *Layer) WriteMsgTo(msg sip.Message, addr string, network string) error {
 	//    changed.
 	case *sip.Request:
 		//Every new request must be handled in seperate connection
-		conn, err = l.ClientRequestConnection(m)
+		conn, err = l.ClientRequestWrite(m, func(c Connection) error { return c.WriteMsg(m) })
 		if err != nil {
 			return err
 		}
-
-		// Reference counting should prevent us closing connection too early
-		defer conn.TryClose()
+		conn.TryClose()
+		return nil
 
 	case *sip.Response:
 
@@ -305,18 +304,74 @@ func (l *Layer) WriteMsgTo(msg sip.Message, addr string, network string) error {
 //
 // In case req destination is DNS resolved, destination will be cached or in
 // other words SetDestination will be called
-func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err error) {
+func (l *Layer) ClientRequestConnection(req *sip.Request) (Connection, error) {
+	c, _, err := l.clientRequestConnection(req)
+	return c, err
+}
+
+// ClientRequestWrite gets a connection for req as ClientRequestConnection does
+// and hands it to write, which sends req on it and must fail only if that write
+// failed. On success the caller holds a reference to the returned connection;
+// on failure no reference is left held.
+//
+// A pooled connection can go bad while idle, with nothing noticing until a
+// write fails. That write did not reach the peer whole, so the peer cannot have
+// acted on the request, and it is written once more on a newly dialed
+// connection. A newly dialed connection that fails is not retried.
+func (l *Layer) ClientRequestWrite(req *sip.Request, write func(Connection) error) (Connection, error) {
+	var viaHost string
+	var viaPort int
+	if via := req.Via(); via != nil {
+		viaHost, viaPort = via.Host, via.Port
+	}
+
+	c, reused, err := l.clientRequestConnection(req)
+	if err != nil {
+		return nil, err
+	}
+	err = write(c)
+	if err == nil {
+		return c, nil
+	}
+	c.TryClose()
+	if !reused {
+		return nil, err
+	}
+
+	l.log.Info("write on a pooled connection failed, retrying on a new one", "raddr", req.Destination(), "err", err)
+
+	// The failed attempt filled Via sent-by from the old connection, and a new
+	// connection only fills in what the caller left empty.
+	via := req.Via()
+	via.Host, via.Port = viaHost, viaPort
+
+	// The failed write took the connection out of the pool, so this dials,
+	// unless a concurrent request has dialed already.
+	c, _, err = l.clientRequestConnection(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := write(c); err != nil {
+		c.TryClose()
+		return nil, err
+	}
+	return c, nil
+}
+
+// clientRequestConnection also reports whether the connection was taken from the
+// pool rather than dialed for this request.
+func (l *Layer) clientRequestConnection(req *sip.Request) (c Connection, reused bool, err error) {
 	network := NetworkToLower(req.Transport())
 	transport, ok := l.transports[network]
 	if !ok {
-		return nil, fmt.Errorf("transport %s is not supported", network)
+		return nil, false, fmt.Errorf("transport %s is not supported", network)
 	}
 
 	// Resolve our remote address
 	a := req.Destination()
 	host, port, err := sip.ParseAddr(a)
 	if err != nil {
-		return nil, fmt.Errorf("build address target for %s: %w", a, err)
+		return nil, false, fmt.Errorf("build address target for %s: %w", a, err)
 	}
 
 	// dns srv lookup
@@ -336,7 +391,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 			err = l.resolveAddr(context.Background(), service, protocol, host, false, &raddr)
 		}
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		// Save destination in request to avoid repeated resolving
 		req.SetDestination(raddr.String())
@@ -350,7 +405,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 	viaHop := req.Via()
 	if viaHop == nil {
 		// NOTE: We are enforcing that client creates this header
-		return nil, fmt.Errorf("missing Via Header")
+		return nil, false, fmt.Errorf("missing Via Header")
 	}
 
 	// TODO refactor code below
@@ -369,7 +424,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 			// TODO handle broadcast address
 			host, port, err := sip.ParseAddr(laddrStr)
 			if err != nil {
-				return nil, fmt.Errorf("fail to parse local connection address network=%s addr=%s: %w", network, laddrStr, err)
+				return nil, false, fmt.Errorf("fail to parse local connection address network=%s addr=%s: %w", network, laddrStr, err)
 			}
 
 			// In case client forced some host (like external IP) we do not want to overwrite
@@ -397,7 +452,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 			}
 
 			viaHop.Port = port
-			return c, nil
+			return c, true, nil
 		}
 		l.log.Debug("Active connection not found", "addr", addr)
 	}
@@ -412,7 +467,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 
 	c, err = l.createConnection(network, transport, laddr, host, raddr)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// TODO refactor this
@@ -426,7 +481,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 
 		host, port, err = sip.ParseAddr(laddrStr)
 		if err != nil {
-			return nil, fmt.Errorf("fail to parse local connection address network=%s addr=%s: %w", network, laddrStr, err)
+			return nil, false, fmt.Errorf("fail to parse local connection address network=%s addr=%s: %w", network, laddrStr, err)
 		}
 
 		if viaHop.Host == "" {
@@ -434,7 +489,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		}
 		viaHop.Port = port
 	}
-	return c, nil
+	return c, false, nil
 }
 
 // createConnection dials raddr. With connection reuse on a stream transport,

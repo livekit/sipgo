@@ -148,28 +148,23 @@ func (txl *Layer) Request(req *sip.Request) (*ClientTx, error) {
 		return nil, fmt.Errorf("transaction %q already exists", key)
 	}
 
-	conn, err := txl.tpl.ClientRequestConnection(req)
+	// The transport may write the request a second time, on a new connection,
+	// so each attempt gets its own transaction.
+	var tx *ClientTx
+	_, err = txl.tpl.ClientRequestWrite(req, func(conn transport.Connection) error {
+		tx = NewClientTx(key, req, conn, txl.log)
+
+		// Avoid allocations of anonymous functions
+		tx.OnTerminate(txl.clientTxTerminate)
+		txl.clientTransactions.put(tx.Key(), tx)
+
+		if err := tx.Init(); err != nil {
+			txl.clientTxTerminate(tx.key) //Force termination here
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, err
-	}
-
-	// TODO remove this check
-	if conn == nil {
-		return nil, fmt.Errorf("connection is nil")
-	}
-
-	// TODO
-	tx := NewClientTx(key, req, conn, txl.log)
-	if err != nil {
-		return nil, err
-	}
-
-	// Avoid allocations of anonymous functions
-	tx.OnTerminate(txl.clientTxTerminate)
-	txl.clientTransactions.put(tx.Key(), tx)
-
-	if err := tx.Init(); err != nil {
-		txl.clientTxTerminate(tx.key) //Force termination here
 		return nil, err
 	}
 

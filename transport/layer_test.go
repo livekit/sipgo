@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -761,4 +762,91 @@ func TestClientRequestConnectionSharesDialError(t *testing.T) {
 	for i := range n {
 		require.ErrorIs(t, errs[i], dialErr)
 	}
+}
+
+// addrConn gives a net.Pipe end a TCP local address, which the layer parses
+// into Via.
+type addrConn struct {
+	net.Conn
+	laddr net.Addr
+}
+
+func (c addrConn) LocalAddr() net.Addr { return c.laddr }
+
+// A pooled connection whose write fails is replaced: the request goes out once
+// more on a new connection, with Via sent-by naming that connection.
+func TestClientRequestWriteRetriesPooledConnection(t *testing.T) {
+	prev := TCPWriteTimeout
+	TCPWriteTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { TCPWriteTimeout = prev })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+	var accepted atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			go io.Copy(io.Discard, c)
+		}
+	}()
+
+	l := NewLayer(slog.Default(), net.DefaultResolver, sipgo.NewParser(), nil, nil)
+	t.Cleanup(func() { _ = l.Close() })
+
+	// A pooled connection to the listener's address whose peer never reads.
+	stalled, remote := net.Pipe()
+	t.Cleanup(func() { remote.Close() })
+	stale := l.tcp.initConnection(addrConn{stalled, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 40001}},
+		ln.Addr().String(), func(sipgo.Message) {})
+
+	lport := ln.Addr().(*net.TCPAddr).Port
+	req := newTestRequest("127.0.0.1", lport)
+	req.SetTransport("TCP")
+	req.Via().Host = "10.9.9.9"
+
+	var tried []Connection
+	c, err := l.ClientRequestWrite(req, func(c Connection) error {
+		tried = append(tried, c)
+		return c.WriteMsg(req)
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { c.TryClose() })
+
+	require.Len(t, tried, 2)
+	require.Same(t, stale, tried[0])
+	require.NotSame(t, stale, c)
+	require.Eventually(t, func() bool { return accepted.Load() == 1 }, time.Second, time.Millisecond)
+
+	_, port, err := sipgo.ParseAddr(c.LocalAddr().String())
+	require.NoError(t, err)
+	require.Equal(t, "10.9.9.9", req.Via().Host)
+	require.Equal(t, port, req.Via().Port)
+}
+
+// A connection dialed for the request that then fails is not retried.
+func TestClientRequestWriteNewConnectionNotRetried(t *testing.T) {
+	tr := &dialCountingTransport{pool: NewConnectionPool(), release: make(chan struct{})}
+	close(tr.release)
+
+	l := NewLayer(slog.Default(), net.DefaultResolver, sipgo.NewParser(), nil, nil)
+	t.Cleanup(func() { _ = l.Close() })
+	l.transports["tcp"] = tr
+
+	req := newTestRequest("192.0.2.10", 5060)
+	req.SetTransport("TCP")
+
+	writeErr := errors.New("write failed")
+	writes := 0
+	_, err := l.ClientRequestWrite(req, func(Connection) error {
+		writes++
+		return writeErr
+	})
+	require.ErrorIs(t, err, writeErr)
+	require.Equal(t, 1, writes)
+	require.EqualValues(t, 1, tr.dials.Load())
 }
