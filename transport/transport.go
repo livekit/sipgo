@@ -21,6 +21,10 @@ var (
 	// this long. CRLF keep alives count as a read, so this mostly catches a
 	// peer that went away without a FIN or RST. 0 disables it.
 	TCPReadTimeout = 5 * time.Minute
+
+	// TCPWriteTimeout fails a write on a TCP or TLS connection that cannot
+	// finish in this long, which drops the connection. 0 disables it.
+	TCPWriteTimeout = 10 * time.Second
 )
 
 const (
