@@ -112,15 +112,6 @@ func (t *TCPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	return t.createConnection(traddr, handler)
 }
 
-// TODO add a per-address dial lock here, so only one connection per address can
-// exist. The layer checks the pool and dials without holding anything in
-// between (layer.go GetConnection then CreateConnection), so two concurrent
-// requests to an address with no connection both dial. The pool keeps only the
-// last one, which orphans the other: it stays open with its read loop running
-// but is never handed out again, and follow-up requests for a dialog started on
-// it go out on the surviving connection instead. The lock has to be
-// per-address, otherwise a slow handshake to one peer blocks dials to everyone
-// else, and it must re-check the pool after acquiring.
 func (t *TCPTransport) createConnection(raddr *net.TCPAddr, handler sip.MessageHandler) (Connection, error) {
 	addr := raddr.String()
 	t.log.Debug("Dialing new connection", "raddr", addr)

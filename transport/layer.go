@@ -12,6 +12,7 @@ import (
 	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/livekit/sipgo/sip"
 )
@@ -70,6 +71,9 @@ type Layer struct {
 
 	// ConnectionReuse will force connection reuse when passing request
 	ConnectionReuse bool
+
+	// dials holds the dials in progress, keyed by network and remote address.
+	dials singleflight.Group
 }
 
 // NewLayer creates transport layer.
@@ -406,7 +410,7 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 
 	l.log.Debug("Via header used for creating connection", "host", viaHop.Host, "port", viaHop.Port)
 
-	c, err = transport.CreateConnection(laddr, host, raddr, l.handleMessage)
+	c, err = l.createConnection(network, transport, laddr, host, raddr)
 	if err != nil {
 		return nil, err
 	}
@@ -430,6 +434,45 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		}
 		viaHop.Port = port
 	}
+	return c, nil
+}
+
+// createConnection dials raddr. With connection reuse on a stream transport,
+// requests to one address share a single dial, including its error, and one
+// that finds a connection already pooled takes that. A second dial would
+// replace the first in the pool, orphaning it.
+//
+// The mechanism came from emiago/sipgo ConnectionPool.addSingleflight (main at
+// d421521): a singleflight per address, the pool checked again inside it, and
+// the dial's reference swapped for one per caller. Changed: it runs here rather
+// than in each transport's CreateConnection, since only the Layer knows about
+// ConnectionReuse and the transports register connections in their own pools;
+// it is keyed by network and remote address, where upstream uses the local and
+// remote address; and it skips UDP, which upstream includes.
+func (l *Layer) createConnection(network string, transport Transport, laddr Addr, host string, raddr Addr) (Connection, error) {
+	if !l.ConnectionReuse || !IsReliable(network) {
+		return transport.CreateConnection(laddr, host, raddr, l.handleMessage)
+	}
+
+	addr := raddr.String()
+	v, err, _ := l.dials.Do(network+" "+addr, func() (any, error) {
+		c, _ := transport.GetConnection(addr)
+		if c == nil {
+			var err error
+			if c, err = transport.CreateConnection(laddr, host, raddr, l.handleMessage); err != nil {
+				return nil, err
+			}
+		}
+		// Every caller takes its own reference below.
+		c.Ref(-1)
+		return c, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	c := v.(Connection)
+	c.Ref(1)
 	return c, nil
 }
 
