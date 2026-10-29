@@ -114,6 +114,7 @@ func (t *WSTransport) initConnection(conn net.Conn, addr string, clientSide bool
 		Conn:       conn,
 		refcount:   1,
 		clientSide: clientSide,
+		log:        t.log,
 	}
 	t.pool.Add(addr, c)
 	go t.readConnection(c, addr, handler)
@@ -265,6 +266,7 @@ type WSConnection struct {
 	net.Conn
 
 	clientSide bool
+	log        *slog.Logger
 	mu         sync.RWMutex
 	refcount   int
 }
@@ -274,7 +276,7 @@ func (c *WSConnection) Ref(i int) int {
 	c.refcount += i
 	ref := c.refcount
 	c.mu.Unlock()
-	slog.Debug("WS reference increment", "ip", c.RemoteAddr(), "ref", ref)
+	c.log.Debug("WS reference increment", "ip", c.RemoteAddr(), "ref", ref)
 	return ref
 
 }
@@ -283,7 +285,7 @@ func (c *WSConnection) Close() error {
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	slog.Debug("WS doing hard close", "ip", c.RemoteAddr(), "ref", c.refcount)
+	c.log.Debug("WS doing hard close", "ip", c.RemoteAddr(), "ref", c.refcount)
 	return c.Conn.Close()
 }
 
@@ -292,16 +294,16 @@ func (c *WSConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	slog.Debug("WS reference decrement", "ip", c.RemoteAddr(), "ref", c.refcount)
+	c.log.Debug("WS reference decrement", "ip", c.RemoteAddr(), "ref", c.refcount)
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		slog.Warn("WS ref went negative", "ip", c.RemoteAddr(), "ref", c.refcount)
+		c.log.Warn("WS ref went negative", "ip", c.RemoteAddr(), "ref", c.refcount)
 		return 0, nil
 	}
-	slog.Debug("WS closing", "ip", c.RemoteAddr(), "ref", c.refcount)
+	c.log.Debug("WS closing", "ip", c.RemoteAddr(), "ref", c.refcount)
 	return ref, c.Conn.Close()
 }
 
@@ -321,7 +323,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 		}
 
 		if SIPDebug {
-			slog.Debug("WS read connection header", "caller", c.RemoteAddr(), "op", header.OpCode, "sz", header.Length)
+			c.log.Debug("WS read connection header", "caller", c.RemoteAddr(), "op", header.OpCode, "sz", header.Length)
 		}
 
 		if header.OpCode == ws.OpClose {
@@ -343,7 +345,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 		// }
 
 		if SIPDebug {
-			slog.Debug("WS read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(data))
+			c.log.Debug("WS read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(data))
 		}
 
 		if header.Masked {
@@ -363,7 +365,7 @@ func (c *WSConnection) Read(b []byte) (n int, err error) {
 
 func (c *WSConnection) Write(b []byte) (n int, err error) {
 	if SIPDebug {
-		slog.Debug("WS write", "caller", c.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b))
+		c.log.Debug("WS write", "caller", c.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b))
 	}
 
 	fs := ws.NewFrame(ws.OpText, true, b)
