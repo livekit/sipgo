@@ -3,15 +3,21 @@ package transport
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"log/slog"
 	"net"
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
+	"github.com/stretchr/testify/require"
+
+	"github.com/livekit/sipgo/fakes"
+	"github.com/livekit/sipgo/sip"
 )
 
 // fakeDNS is a minimal UDP DNS server answering A, AAAA and SRV queries from a table.
@@ -660,5 +666,99 @@ func TestSRVLabels(t *testing.T) {
 		if got := "_" + service + "._" + protocol; got != tc.want {
 			t.Errorf("srvLabels(%q, %q) = %s, want %s", tc.network, tc.uriScheme, got, tc.want)
 		}
+	}
+}
+
+// dialCountingTransport counts dials and holds each one until release closes, so
+// a test can pile requests up behind a dial in progress.
+type dialCountingTransport struct {
+	Transport
+	pool    *ConnectionPool
+	dials   atomic.Int32
+	release chan struct{}
+	err     error
+}
+
+func (t *dialCountingTransport) Close() error { return nil }
+
+func (t *dialCountingTransport) GetConnection(addr string) (Connection, error) {
+	if c := t.pool.Get(addr); c != nil {
+		return c, nil
+	}
+	return nil, nil
+}
+
+func (t *dialCountingTransport) CreateConnection(laddr Addr, host string, raddr Addr, handler sip.MessageHandler) (Connection, error) {
+	t.dials.Add(1)
+	<-t.release
+	if t.err != nil {
+		return nil, t.err
+	}
+	c := &TCPConnection{
+		Conn: &fakes.TCPConn{
+			LAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 40000},
+			RAddr: net.TCPAddr{IP: raddr.IP, Port: raddr.Port},
+		},
+		refcount: 1 + IdleConnection,
+	}
+	t.pool.Add(raddr.String(), c)
+	return c, nil
+}
+
+// requestsDuringDial sends n requests to one address while the first dial is
+// held, then lets it finish.
+func requestsDuringDial(t *testing.T, tr *dialCountingTransport, n int) ([]Connection, []error) {
+	t.Helper()
+	l := NewLayer(slog.Default(), net.DefaultResolver, sipgo.NewParser(), nil, nil)
+	t.Cleanup(func() { _ = l.Close() })
+	l.transports["tcp"] = tr
+
+	conns := make([]Connection, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := newTestRequest("192.0.2.10", 5060)
+			req.SetTransport("TCP")
+			conns[i], errs[i] = l.ClientRequestConnection(req)
+		}()
+	}
+
+	require.Eventually(t, func() bool { return tr.dials.Load() == 1 }, time.Second, time.Millisecond)
+	// Let the rest reach the dial in progress.
+	time.Sleep(50 * time.Millisecond)
+	close(tr.release)
+	wg.Wait()
+	return conns, errs
+}
+
+// Concurrent requests to an address with no connection share one dial, and each
+// holds its own reference to the result.
+func TestClientRequestConnectionSharesDial(t *testing.T) {
+	const n = 10
+	tr := &dialCountingTransport{pool: NewConnectionPool(), release: make(chan struct{})}
+	conns, errs := requestsDuringDial(t, tr, n)
+
+	require.EqualValues(t, 1, tr.dials.Load())
+	for i := range n {
+		require.NoError(t, errs[i])
+		require.Same(t, conns[0], conns[i])
+	}
+	require.Equal(t, IdleConnection+n, conns[0].Ref(0))
+}
+
+// A failed dial fails every request waiting on it rather than each dialing in
+// turn.
+func TestClientRequestConnectionSharesDialError(t *testing.T) {
+	const n = 10
+	dialErr := errors.New("dial failed")
+	tr := &dialCountingTransport{pool: NewConnectionPool(), release: make(chan struct{}), err: dialErr}
+	_, errs := requestsDuringDial(t, tr, n)
+
+	require.EqualValues(t, 1, tr.dials.Load())
+	for i := range n {
+		require.ErrorIs(t, errs[i], dialErr)
 	}
 }

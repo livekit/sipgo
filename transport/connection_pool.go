@@ -20,8 +20,8 @@ func NewConnectionPool() *ConnectionPool {
 }
 
 // Add registers a connection for an address. One connection per address: the
-// last one added wins, so a duplicate silently orphans the previous one. See
-// the TODO in TCPTransport.createConnection for why duplicates can happen.
+// last one added wins, so a duplicate silently orphans the previous one.
+// Layer.createConnection keeps concurrent requests from dialing duplicates.
 func (p *ConnectionPool) Add(a string, c Connection) {
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
