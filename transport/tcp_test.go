@@ -15,6 +15,7 @@ import (
 	"time"
 
 	sipgo "github.com/emiago/sipgo/sip"
+	"github.com/livekit/sipgo/fakes"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -427,4 +428,54 @@ func TestReadConnectionClosesOnFailedTLSHandshake(t *testing.T) {
 	require.Eventually(t, func() bool { return tr.pool.Size() == 0 }, 2*time.Second, 5*time.Millisecond,
 		"expected the connection to be closed")
 	require.Equal(t, before+1, testutil.ToFloat64(closed))
+}
+
+// A write that times out must take the connection out of the pool before
+// WriteMsg returns, so the next request to that address dials a new one rather
+// than failing the same way.
+func TestWriteMsgFailureDropsConnection(t *testing.T) {
+	prev := TCPWriteTimeout
+	TCPWriteTimeout = 25 * time.Millisecond
+
+	tr := NewTCPTransport(slog.New(slog.NewTextHandler(io.Discard, nil)), sipgo.NewParser(), nil)
+	local, remote := net.Pipe()
+
+	defer func() {
+		remote.Close()
+		tr.Close()
+		TCPWriteTimeout = prev
+	}()
+
+	closed := connectionClosed.WithLabelValues(tr.Network(), "write_error")
+	before := testutil.ToFloat64(closed)
+
+	// The peer never reads, so the write cannot complete.
+	c := tr.initConnection(local, "10.2.2.2:5060", func(sipgo.Message) {})
+
+	req := sipgo.NewRequest(sipgo.OPTIONS, sipgo.Uri{Scheme: "sip", Host: "10.2.2.2", Port: 5060})
+	err := c.WriteMsg(req)
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	require.Zero(t, tr.pool.Size())
+
+	require.Eventually(t, func() bool { return testutil.ToFloat64(closed) == before+1 }, 2*time.Second, 5*time.Millisecond)
+}
+
+// Cleanup of a dropped connection must not evict a newer connection that has
+// taken its address in the meantime.
+func TestCloseAndDeleteKeepsReplacement(t *testing.T) {
+	pool := NewConnectionPool()
+	newConn := func() *TCPConnection {
+		return &TCPConnection{Conn: &fakes.TCPConn{
+			LAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5060},
+			RAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.2"), Port: 5060},
+		}}
+	}
+	addr := "127.0.0.2:5060"
+
+	old, replacement := newConn(), newConn()
+	pool.Add(addr, old)
+	pool.Add(addr, replacement)
+
+	pool.CloseAndDelete(slog.New(slog.NewTextHandler(io.Discard, nil)), old, addr)
+	require.Same(t, replacement, pool.Get(addr))
 }

@@ -59,7 +59,10 @@ func (p *ConnectionPool) CloseAndDelete(log *slog.Logger, c Connection, addr str
 			log.Info("Closing connection returned error", "err", err)
 		}
 	}
-	delete(p.m, addr)
+	// A newer connection may have replaced c under addr by now.
+	if p.m[addr] == c {
+		delete(p.m, addr)
+	}
 }
 
 // Clear will clear all connection from pool and close them

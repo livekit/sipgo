@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -155,6 +156,7 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 		Conn:     conn,
 		refcount: 1 + IdleConnection,
 	}
+	c.drop = func() { t.pool.CloseAndDelete(t.log, c, addr) }
 	t.pool.Add(addr, c)
 	go t.readConnection(c, addr, handler)
 	return c
@@ -173,7 +175,7 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	defer func() {
 		connectionsOpen.WithLabelValues(t.Network()).Dec()
 		connectionClosed.WithLabelValues(t.Network(), reason).Inc()
-		t.pool.CloseAndDelete(t.log, conn, raddr)
+		conn.dropFromPool()
 	}()
 
 	// Create stream parser context
@@ -193,6 +195,12 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 	for {
 		num, err := conn.Read(buf)
 		if err != nil {
+			if conn.writeFailed.Load() {
+				t.log.Warn("closed connection after a failed write", "raddr", raddr)
+				reason = "write_error"
+				return
+			}
+
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				t.log.Debug("connection was closed", "err", err)
 				reason = "peer_close"
@@ -354,8 +362,23 @@ func (t *TCPTransport) parseFull(data []byte, src string, handler sip.MessageHan
 type TCPConnection struct {
 	net.Conn
 
+	// drop takes the connection out of its pool and closes it.
+	drop     func()
+	dropOnce sync.Once
+	// writeFailed tells the read loop why the connection closed under it.
+	writeFailed atomic.Bool
+
 	mu       sync.RWMutex
 	refcount int
+}
+
+// dropFromPool runs drop once, whichever of the read loop and a failed write
+// gets there first. Removal is done before returning, so a caller that redials
+// after a failed write cannot be handed this connection again.
+func (c *TCPConnection) dropFromPool() {
+	if c.drop != nil {
+		c.dropOnce.Do(c.drop)
+	}
 }
 
 func (c *TCPConnection) Ref(i int) int {
@@ -411,7 +434,11 @@ func (c *TCPConnection) Read(b []byte) (n int, err error) {
 
 func (c *TCPConnection) Write(b []byte) (n int, err error) {
 	// Some debug hook. TODO move to proper way
-	c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if TCPWriteTimeout > 0 {
+		if err := c.Conn.SetWriteDeadline(time.Now().Add(TCPWriteTimeout)); err != nil {
+			return 0, err
+		}
+	}
 	n, err = c.Conn.Write(b)
 	if SIPDebug {
 		slog.Debug("TCP write", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
@@ -429,16 +456,15 @@ func (c *TCPConnection) WriteMsg(msg sip.Message) error {
 	bytesPacketSize.WithLabelValues("tcp", "write").Observe(float64(len(data)))
 
 	n, err := c.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
 	if err != nil {
+		// Part of the message may be on the wire, so the stream can no longer
+		// be framed, and crypto/tls fails every write after a failed one.
+		c.writeFailed.Store(true)
+		c.dropFromPool()
 		return fmt.Errorf("conn %s write err=%w", c.RemoteAddr().String(), err)
-	}
-
-	if n == 0 {
-		return fmt.Errorf("wrote 0 bytes")
-	}
-
-	if n != len(data) {
-		return fmt.Errorf("fail to write full message")
 	}
 	return nil
 }
