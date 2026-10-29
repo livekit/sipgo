@@ -66,7 +66,7 @@ func (t *UDPTransport) Serve(conn net.PacketConn, handler sip.MessageHandler) er
 		Multiple readers makes problem, which can delay writing response
 	*/
 
-	c := &UDPConnection{PacketConn: conn}
+	c := &UDPConnection{PacketConn: conn, log: t.log}
 
 	t.mu.Lock()
 	t.listeners = append(t.listeners, c)
@@ -133,6 +133,7 @@ func (t *UDPTransport) CreateConnection(laddr Addr, host string, raddr Addr, han
 	c := &UDPConnection{
 		PacketConn: udpconn,
 		raddr:      uraddr,
+		log:        t.log,
 		refcount:   1 + IdleConnection,
 	}
 
@@ -250,6 +251,7 @@ type UDPConnection struct {
 	// TODO Refactor
 	PacketConn net.PacketConn
 	raddr      *net.UDPAddr
+	log        *slog.Logger
 
 	mu       sync.RWMutex
 	refcount int
@@ -281,7 +283,7 @@ func (c *UDPConnection) Close() error {
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	slog.Debug("UDP doing hard close", "ip", c.LocalAddr(), "dst", c.raddr, "ref", 0)
+	c.log.Debug("UDP doing hard close", "ip", c.LocalAddr(), "dst", c.raddr, "ref", 0)
 	return c.PacketConn.Close()
 }
 
@@ -294,31 +296,31 @@ func (c *UDPConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	slog.Debug("UDP reference decrement", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
+	c.log.Debug("UDP reference decrement", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		slog.Warn("UDP ref went negative", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
+		c.log.Warn("UDP ref went negative", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
 		return 0, nil
 	}
 
-	slog.Debug("UDP closing", "ip", c.LocalAddr(), "dst", c.raddr, "ref", ref)
+	c.log.Debug("UDP closing", "ip", c.LocalAddr(), "dst", c.raddr, "ref", ref)
 	return 0, c.PacketConn.Close()
 }
 
 func (c *UDPConnection) Read(b []byte) (n int, err error) {
 	n, _, err = c.PacketConn.ReadFrom(b)
 	if SIPDebug {
-		slog.Debug("UDP read", "local", c.PacketConn.LocalAddr(), "remote", c.raddr, "data", string(b[:n]))
+		c.log.Debug("UDP read", "local", c.PacketConn.LocalAddr(), "remote", c.raddr, "data", string(b[:n]))
 	}
 	return n, err
 }
 
 func (c *UDPConnection) Write(b []byte) (n int, err error) {
 	if SIPDebug {
-		slog.Debug("UDP write", "local", c.PacketConn.LocalAddr(), "remote", c.raddr, "data", string(b))
+		c.log.Debug("UDP write", "local", c.PacketConn.LocalAddr(), "remote", c.raddr, "data", string(b))
 	}
 	return c.PacketConn.WriteTo(b, c.raddr)
 }
@@ -327,7 +329,7 @@ func (c *UDPConnection) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	// Some debug hook. TODO move to proper way
 	n, addr, err = c.PacketConn.ReadFrom(b)
 	if err == nil && SIPDebug {
-		slog.Debug("UDP read", "local", c.PacketConn.LocalAddr(), "remote", addr, "data", string(b[:n]))
+		c.log.Debug("UDP read", "local", c.PacketConn.LocalAddr(), "remote", addr, "data", string(b[:n]))
 	}
 	return n, addr, err
 }
@@ -336,7 +338,7 @@ func (c *UDPConnection) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	// Some debug hook. TODO move to proper way
 	n, err = c.PacketConn.WriteTo(b, addr)
 	if SIPDebug {
-		slog.Debug("UDP write", "local", c.PacketConn.LocalAddr(), "remote", addr, "data", string(b))
+		c.log.Debug("UDP write", "local", c.PacketConn.LocalAddr(), "remote", addr, "data", string(b))
 	}
 	return n, err
 }

@@ -145,6 +145,7 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 	t.log.Debug("New connection", "raddr", addr)
 	c := &TCPConnection{
 		Conn:     conn,
+		log:      t.log,
 		refcount: 1 + IdleConnection,
 	}
 	c.drop = func() { t.pool.CloseAndDelete(t.log, c, addr) }
@@ -352,6 +353,7 @@ func (t *TCPTransport) parseFull(data []byte, src string, handler sip.MessageHan
 
 type TCPConnection struct {
 	net.Conn
+	log      *slog.Logger
 
 	// drop takes the connection out of its pool and closes it.
 	drop     func()
@@ -377,7 +379,7 @@ func (c *TCPConnection) Ref(i int) int {
 	c.refcount += i
 	ref := c.refcount
 	c.mu.Unlock()
-	slog.Debug("TCP reference increment", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
+	c.log.Debug("TCP reference increment", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return ref
 }
 
@@ -385,7 +387,7 @@ func (c *TCPConnection) Close() error {
 	c.mu.Lock()
 	c.refcount = 0
 	c.mu.Unlock()
-	slog.Debug("TCP doing hard close", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", 0)
+	c.log.Debug("TCP doing hard close", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", 0)
 	return c.Conn.Close()
 }
 
@@ -394,17 +396,17 @@ func (c *TCPConnection) TryClose() (int, error) {
 	c.refcount--
 	ref := c.refcount
 	c.mu.Unlock()
-	slog.Debug("TCP reference decrement", "ip", c.LocalAddr(), "dst", c.RemoteAddr().String(), "ref", ref)
+	c.log.Debug("TCP reference decrement", "ip", c.LocalAddr(), "dst", c.RemoteAddr().String(), "ref", ref)
 	if ref > 0 {
 		return ref, nil
 	}
 
 	if ref < 0 {
-		slog.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
+		c.log.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 		return 0, nil
 	}
 
-	slog.Debug("TCP closing", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
+	c.log.Debug("TCP closing", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return ref, c.Conn.Close()
 }
 
@@ -418,7 +420,7 @@ func (c *TCPConnection) Read(b []byte) (n int, err error) {
 	// Some debug hook. TODO move to proper way
 	n, err = c.Conn.Read(b)
 	if SIPDebug {
-		slog.Debug("TCP read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
+		c.log.Debug("TCP read", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
 	}
 	return n, err
 }
@@ -432,7 +434,7 @@ func (c *TCPConnection) Write(b []byte) (n int, err error) {
 	}
 	n, err = c.Conn.Write(b)
 	if SIPDebug {
-		slog.Debug("TCP write", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
+		c.log.Debug("TCP write", "local", c.Conn.LocalAddr(), "remote", c.Conn.RemoteAddr(), "data", string(b[:n]))
 	}
 	return n, err
 }
