@@ -408,17 +408,16 @@ func (c *TCPConnection) TryClose() (int, error) {
 	}
 	c.mu.Unlock()
 	c.log.Debug("TCP reference decrement", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
-	if closed {
+	if ref < 0 {
+		c.log.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 		return 0, nil
 	}
 	if ref > 0 {
 		return ref, nil
 	}
-	if ref < 0 {
-		c.log.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
+	if closed {
 		return 0, nil
 	}
-
 	c.log.Debug("TCP closing", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return 0, c.Conn.Close()
 }
