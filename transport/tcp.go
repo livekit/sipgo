@@ -144,8 +144,10 @@ func (t *TCPTransport) initConnection(conn net.Conn, addr string, handler sip.Me
 
 	t.log.Debug("New connection", "raddr", addr)
 	c := &TCPConnection{
-		Conn:     conn,
-		log:      t.log,
+		Conn: conn,
+		log:  t.log,
+		// TODO: the 1 is the dialer's reference. A connection accepted by Serve
+		// has no dialer, so nobody ever releases it.
 		refcount: 1 + IdleConnection,
 	}
 	c.drop = func() { t.pool.CloseAndDelete(t.log, c, addr) }
@@ -412,11 +414,14 @@ func (c *TCPConnection) TryClose() (int, error) {
 		c.log.Warn("TCP ref went negative", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 		return 0, nil
 	}
-	if ref > 0 {
-		return ref, nil
-	}
+	// TODO: counts are not balanced. initConnection gives a connection accepted by
+	// Serve the dialer's reference, which nobody owns, so ref stays above 0 after
+	// every holder of a closed accepted connection has released it.
 	if closed {
 		return 0, nil
+	}
+	if ref > 0 {
+		return ref, nil
 	}
 	c.log.Debug("TCP closing", "ip", c.LocalAddr(), "dst", c.RemoteAddr(), "ref", ref)
 	return 0, c.Conn.Close()

@@ -308,15 +308,15 @@ func (c *UDPConnection) TryClose() (int, error) {
 	}
 	c.mu.Unlock()
 	c.log.Debug("UDP reference decrement", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
+	if ref < 0 {
+		c.log.Warn("UDP ref went negative", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
+		return 0, nil
+	}
 	if closed {
 		return 0, nil
 	}
 	if ref > 0 {
 		return ref, nil
-	}
-	if ref < 0 {
-		c.log.Warn("UDP ref went negative", "src", c.PacketConn.LocalAddr(), "dst", c.raddr, "ref", ref)
-		return 0, nil
 	}
 
 	c.log.Debug("UDP closing", "ip", c.LocalAddr(), "dst", c.raddr, "ref", ref)
