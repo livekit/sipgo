@@ -39,6 +39,11 @@ func NewClientTx(key string, origin *sip.Request, conn transport.Connection, log
 }
 
 func (tx *ClientTx) Init() error {
+	// Hold the FSM until the timers are set. Over UDP a response can be processed before
+	// WriteMsg returns; a final one would then find timer D unset, as on a reliable
+	// transport, and the transaction would be deleted with the response still unread.
+	tx.fsmMu.Lock()
+	defer tx.fsmMu.Unlock()
 	tx.initFSM()
 
 	if err := tx.conn.WriteMsg(tx.origin); err != nil {
@@ -184,14 +189,13 @@ func (tx *ClientTx) ack() {
 }
 
 // Initialises the correct kind of FSM based on request method.
+// initFSM sets the initial state. The caller holds fsmMu.
 func (tx *ClientTx) initFSM() {
-	tx.fsmMu.Lock()
 	if tx.origin.IsInvite() {
 		tx.fsmState = tx.inviteStateCalling
 	} else {
 		tx.fsmState = tx.stateCalling
 	}
-	tx.fsmMu.Unlock()
 }
 
 func (tx *ClientTx) resend() {
