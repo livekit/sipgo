@@ -479,3 +479,20 @@ func TestCloseAndDeleteKeepsReplacement(t *testing.T) {
 	pool.CloseAndDelete(slog.New(slog.NewTextHandler(io.Discard, nil)), old, addr)
 	require.Same(t, replacement, pool.Get(addr))
 }
+
+func TestFramingErrorLevel(t *testing.T) {
+	for raddr, exp := range map[string]slog.Level{
+		"10.0.0.1:5060":      slog.LevelError, // a proxy inside the cluster
+		"192.168.1.10:5060":  slog.LevelError,
+		"127.0.0.1:5060":     slog.LevelError,
+		"[::1]:5060":         slog.LevelError,
+		"[fd00::1]:5060":     slog.LevelError,
+		"203.0.113.7:5060":   slog.LevelWarn, // a public peer
+		"[2001:db8::1]:5061": slog.LevelWarn,
+		"not-an-address":     slog.LevelError,
+	} {
+		if got := framingErrorLevel(raddr); got != exp {
+			t.Errorf("%s: got %v, want %v", raddr, got, exp)
+		}
+	}
+}
