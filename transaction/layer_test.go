@@ -171,6 +171,6 @@ func TestAckAndCancelMatchInviteOrStandAlone(t *testing.T) {
 		defer mu.Unlock()
 		s := string(got)
 		ok200, ok487 := strings.Index(s, "SIP/2.0 200"), strings.Index(s, "SIP/2.0 487")
-		return ok200 >= 0 && ok487 > ok200
-	}, 2*time.Second, 10*time.Millisecond)
+		return ok200 >= 0 && ok487 == -1 // Must not generate 487 from sipgo
+	}, 15*time.Millisecond, 1*time.Millisecond)
 }
