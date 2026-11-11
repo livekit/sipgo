@@ -144,7 +144,7 @@ func (txl *Layer) matchInviteTransaction(req *sip.Request) bool {
 		// 200 before the 487, as upstream does: it stops the UAC's CANCEL
 		// retransmissions first.
 		res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
-		if err := tx.conn.WriteMsg(res); err != nil {
+		if err := txl.tpl.WriteMsg(res); err != nil {
 			txl.log.Error("send '200 OK' for CANCEL failed", "err", err)
 			return true
 		}
