@@ -53,13 +53,14 @@ type FnTxTerminate func(key string)
 // MakeServerTxKey creates server key for matching retransmitting requests - RFC 3261 17.2.3.
 // ACK and CANCEL keep their own method. Match them to an INVITE with makeServerTxKey(msg, sip.INVITE).
 func MakeServerTxKey(msg sip.Message) (string, error) {
-	return makeServerTxKey(msg, "")
+	return makeServerTxKey(msg, "", false)
 }
 
 // makeServerTxKey is MakeServerTxKey, but asMethod replaces the CSeq method when set.
 // ACK and CANCEL are the INVITE's transaction when the branch and sent-by match, and
 // their own transaction otherwise, so the caller chooses which method the key uses.
-func makeServerTxKey(msg sip.Message, asMethod sip.RequestMethod) (string, error) {
+// ignoreViaAddr leaves the sent-by out; see Layer.IgnoreViaHost.
+func makeServerTxKey(msg sip.Message, asMethod sip.RequestMethod, ignoreViaAddr bool) (string, error) {
 	firstViaHop := msg.Via()
 	if firstViaHop == nil {
 		return "", fmt.Errorf("'Via' header not found or empty in message '%s'", sip.MessageShortString(msg))
@@ -99,10 +100,12 @@ func makeServerTxKey(msg sip.Message, asMethod sip.RequestMethod) (string, error
 		// abuilder.Grow(len(branch) + len(firstViaHop.Host) + len(TxSeperator))
 		builder.WriteString(branch)
 		builder.WriteString(TxSeperator)
-		builder.WriteString(firstViaHop.Host)
-		builder.WriteString(TxSeperator)
-		builder.WriteString(strconv.Itoa(port))
-		builder.WriteString(TxSeperator)
+		if !ignoreViaAddr {
+			builder.WriteString(firstViaHop.Host)
+			builder.WriteString(TxSeperator)
+			builder.WriteString(strconv.Itoa(port))
+			builder.WriteString(TxSeperator)
+		}
 		builder.WriteString(string(method))
 
 		return builder.String(), nil

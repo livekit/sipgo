@@ -21,6 +21,8 @@ type UserAgent struct {
 	tlsConfig   *tls.Config
 	tp          *transport.Layer
 	tx          *transaction.Layer
+
+	ignoreViaAddr bool
 }
 
 type UserAgentOption func(s *UserAgent) error
@@ -77,6 +79,15 @@ func WithUserAgentLogger(log *slog.Logger) UserAgentOption {
 	}
 }
 
+// WithUserAgentIgnoreViaHost leaves the top Via host out of server transaction keys.
+// See transaction.Layer.IgnoreViaHost.
+func WithUserAgentIgnoreViaHost() UserAgentOption {
+	return func(s *UserAgent) error {
+		s.ignoreViaAddr = true
+		return nil
+	}
+}
+
 // NewUA creates User Agent
 // User Agent will create transport and transaction layer
 // Check options for customizing user agent
@@ -106,6 +117,9 @@ func NewUA(options ...UserAgentOption) (*UserAgent, error) {
 	// TODO export parser to be configurable
 	ua.tp = transport.NewLayer(ua.log, ua.dnsResolver, sipgo.NewParser(), ua.tcpConfig, ua.tlsConfig)
 	ua.tx = transaction.NewLayer(ua.log, ua.tp)
+	if ua.ignoreViaAddr {
+		ua.tx.IgnoreViaAddr()
+	}
 	return ua, nil
 }
 

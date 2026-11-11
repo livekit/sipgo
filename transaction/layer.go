@@ -28,6 +28,8 @@ type Layer struct {
 
 	clientTransactions *transactionStore
 	serverTransactions *transactionStore
+
+	ignoreViaAddr bool
 }
 
 func NewLayer(log *slog.Logger, tpl *transport.Layer) *Layer {
@@ -47,6 +49,12 @@ func NewLayer(log *slog.Logger, tpl *transport.Layer) *Layer {
 
 func (txl *Layer) OnRequest(h RequestHandler) {
 	txl.reqHandler = h
+}
+
+// ignoreViaAddr leaves the top Via's sent-by host out of server transaction keys.
+// Opt-in, as it is against RFC 3261 §17.2.3 rule 2.
+func (txl *Layer) IgnoreViaAddr() {
+	txl.ignoreViaAddr = true
 }
 
 // UnhandledResponseHandler can be used in case missing client transactions for handling response
@@ -82,7 +90,7 @@ func (txl *Layer) handleRequest(req *sip.Request) {
 		}
 	}
 
-	key, err := makeServerTxKey(req, "")
+	key, err := makeServerTxKey(req, "", txl.ignoreViaAddr)
 	if err != nil {
 		// Any remote peer can send a request with missing or broken headers,
 		// internet scanners in particular, so this is not a server error.
@@ -123,7 +131,7 @@ func (txl *Layer) handleRequest(req *sip.Request) {
 // It reports whether that transaction exists. A matching CANCEL is answered with 200
 // on the INVITE's connection; the INVITE itself moves to 487 from its state machine.
 func (txl *Layer) matchInviteTransaction(req *sip.Request) bool {
-	key, err := makeServerTxKey(req, sip.INVITE)
+	key, err := makeServerTxKey(req, sip.INVITE, txl.ignoreViaAddr)
 	if err != nil {
 		txl.log.Warn("Server tx make key failed", "err", err)
 		return true
@@ -211,7 +219,7 @@ func (txl *Layer) Request(req *sip.Request) (*ClientTx, error) {
 }
 
 func (txl *Layer) Respond(res *sip.Response) (*ServerTx, error) {
-	key, err := MakeServerTxKey(res)
+	key, err := makeServerTxKey(res, "", txl.ignoreViaAddr)
 	if err != nil {
 		return nil, err
 	}
