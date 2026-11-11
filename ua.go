@@ -79,9 +79,9 @@ func WithUserAgentLogger(log *slog.Logger) UserAgentOption {
 	}
 }
 
-// WithUserAgentIgnoreViaHost leaves the top Via host out of server transaction keys.
-// See transaction.Layer.IgnoreViaHost.
-func WithUserAgentIgnoreViaHost() UserAgentOption {
+// WithUserAgentIgnoreViaAddr leaves the top Via host out of server transaction keys.
+// See transaction.Layer.IgnoreViaAddr.
+func WithUserAgentIgnoreViaAddr() UserAgentOption {
 	return func(s *UserAgent) error {
 		s.ignoreViaAddr = true
 		return nil
