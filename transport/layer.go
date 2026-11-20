@@ -19,7 +19,11 @@ import (
 
 var (
 	ErrNetworkNotSuported = errors.New("protocol not supported")
+	ErrDestinationRefused = errors.New("destination refused")
 )
+
+// ResolvedAddressFilter decides whether a request may be sent to addr over network.
+type ResolvedAddressFilter func(network string, addr netip.AddrPort) error
 
 // srvLabels returns the SRV service and protocol labels for a transport.
 // RFC 3263 4.1 covers udp, tcp and tls; RFC 7118 6 covers ws and wss. The secure
@@ -71,6 +75,16 @@ type Layer struct {
 
 	// ConnectionReuse will force connection reuse when passing request
 	ConnectionReuse bool
+
+	// AddressFilter, if set, is checked before every request is sent.
+	//
+	// It is called with the resolved address, after DNS and SRV lookups, which is
+	// the address the transport then dials or writes to.
+	//
+	// It applies to every request, on every transport, including requests that
+	// would reuse a pooled connection. Responses are not filtered: they go back to
+	// where the request came from.
+	AddressFilter ResolvedAddressFilter
 
 	// dials holds the dials in progress, keyed by network and remote address.
 	dials singleflight.Group
@@ -340,6 +354,10 @@ func (l *Layer) ClientRequestConnection(req *sip.Request) (c Connection, err err
 		}
 		// Save destination in request to avoid repeated resolving
 		req.SetDestination(raddr.String())
+	}
+
+	if err := l.checkDestination(network, raddr); err != nil {
+		return nil, err
 	}
 
 	// Now use Via header to determine our local address
@@ -630,6 +648,22 @@ func (l *Layer) resolveAddrSRV(ctx context.Context, service, protocol string, ho
 	// this record's port paired with an address from the fallback lookup.
 	addr.IP = l.pickIP(ips)
 	addr.Port = int(record.Port)
+	return nil
+}
+
+// checkDestination runs the DialFilter, if any, on a resolved address.
+func (l *Layer) checkDestination(network string, raddr Addr) error {
+	if l.AddressFilter == nil {
+		return nil
+	}
+	ip, ok := netip.AddrFromSlice(raddr.IP)
+	if !ok || raddr.Port < 0 || raddr.Port > 65535 {
+		return fmt.Errorf("%w: invalid address %s", ErrDestinationRefused, raddr.String())
+	}
+	addr := netip.AddrPortFrom(ip.Unmap(), uint16(raddr.Port))
+	if err := l.AddressFilter(network, addr); err != nil {
+		return fmt.Errorf("%w: %s %s: %w", ErrDestinationRefused, network, addr, err)
+	}
 	return nil
 }
 

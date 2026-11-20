@@ -23,6 +23,7 @@ type UserAgent struct {
 	tx          *transaction.Layer
 
 	ignoreViaAddr bool
+	dialFilter    transport.ResolvedAddressFilter
 }
 
 type UserAgentOption func(s *UserAgent) error
@@ -88,6 +89,17 @@ func WithUserAgentIgnoreViaAddr() UserAgentOption {
 	}
 }
 
+type ResolvedAddressFilter = transport.ResolvedAddressFilter
+
+// WithUserAgentAddressFilter checks the resolved address of every outgoing request
+// before it is sent. See transport.ResolvedAddressFilter.
+func WithUserAgentAddressFilter(f ResolvedAddressFilter) UserAgentOption {
+	return func(s *UserAgent) error {
+		s.dialFilter = f
+		return nil
+	}
+}
+
 // NewUA creates User Agent
 // User Agent will create transport and transaction layer
 // Check options for customizing user agent
@@ -116,6 +128,7 @@ func NewUA(options ...UserAgentOption) (*UserAgent, error) {
 
 	// TODO export parser to be configurable
 	ua.tp = transport.NewLayer(ua.log, ua.dnsResolver, sipgo.NewParser(), ua.tcpConfig, ua.tlsConfig)
+	ua.tp.AddressFilter = ua.dialFilter
 	ua.tx = transaction.NewLayer(ua.log, ua.tp)
 	if ua.ignoreViaAddr {
 		ua.tx.IgnoreViaAddr()
