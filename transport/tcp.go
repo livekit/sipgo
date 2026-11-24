@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -225,7 +227,8 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 				staleResets++
 				if staleResets > 1 {
 					if everFramed {
-						t.log.Error("closing connection, peer abandoned a second incomplete sip message",
+						t.log.Log(context.Background(), framingErrorLevel(raddr),
+							"closing connection, peer abandoned a second incomplete sip message",
 							"raddr", raddr)
 						reason = "stale_partial_repeated"
 					} else {
@@ -291,7 +294,8 @@ func (t *TCPTransport) readConnection(conn *TCPConnection, raddr string, handler
 			if everFramed {
 				reason = closeReason(err)
 				stuck := par.Buffer().Bytes()
-				t.log.Error("closing connection, sip stream cannot be framed",
+				t.log.Log(context.Background(), framingErrorLevel(raddr),
+					"closing connection, sip stream cannot be framed",
 					"err", err, "reason", reason, "raddr", raddr, "unparsed", len(stuck))
 				// The bytes say why, but they are peer traffic, so they stay out
 				// of the error above and are capped.
@@ -329,6 +333,21 @@ func dataSample(b []byte) string {
 }
 
 // closeReason maps a parse failure to a metric label.
+// framingErrorLevel is the log level for a peer that stopped sending valid SIP framing.
+// A peer on a private or loopback address is usually our own proxy, so the bad bytes are
+// likely our defect: error. A public peer runs a SIP stack we do not control, and closing
+// its connection is the whole remedy: warn.
+func framingErrorLevel(raddr string) slog.Level {
+	ap, err := netip.ParseAddrPort(raddr)
+	if err != nil {
+		return slog.LevelError // can't tell who the peer is, keep it visible
+	}
+	if a := ap.Addr().Unmap(); a.IsPrivate() || a.IsLoopback() {
+		return slog.LevelError
+	}
+	return slog.LevelWarn
+}
+
 func closeReason(err error) string {
 	switch {
 	case errors.Is(err, sipgo.ErrMessageTooLarge):

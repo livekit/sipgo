@@ -110,7 +110,10 @@ func (txl *Layer) handleRequest(req *sip.Request) {
 	// TODO: What if we are gettinb BYE and client closed connection
 	conn, err := txl.tpl.GetConnection(req.Transport(), req.Source())
 	if err != nil {
-		txl.log.Error("Server tx get connection failed", "err", err)
+		// The connection is gone: an earlier write on it failed (usually a peer reset)
+		// or the transport is closing. There is nothing to answer on.
+		txl.log.Warn("Server tx get connection failed", "err", err,
+			"method", req.Method, "source", req.Source(), "transport", req.Transport())
 		return
 	}
 
